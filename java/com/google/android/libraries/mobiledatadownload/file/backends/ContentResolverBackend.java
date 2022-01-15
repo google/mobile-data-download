@@ -39,7 +39,7 @@ import java.io.InputStream;
  *
  * <p>NOTE: In most cases, you'll want to use the GmsClientBackend for accessing files from GMS
  * core. This backend is used to access files from other Apps. Since there are possible security
- * concerns with doing so, ContentResolverBackend is restricted to the "content_resolver_whitelist".
+ * concerns with doing so, ContentResolverBackend is restricted to the "content_resolver_allowlist".
  * See <internal> for more information.
  */
 public final class ContentResolverBackend implements Backend {

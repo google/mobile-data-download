@@ -28,7 +28,7 @@ import javax.annotation.Nullable;
 
 /**
  * Adapter for converting "android:" URIs into java.io.File. This is considered dangerous since it
- * ignores parts of the Uri at the caller's peril, and thus is only available to whitelisted clients
+ * ignores parts of the Uri at the caller's peril, and thus is only available to allowlisted clients
  * (mostly internal).
  */
 public final class AndroidUriAdapter implements UriAdapter {

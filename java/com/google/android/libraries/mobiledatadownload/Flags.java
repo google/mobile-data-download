@@ -48,14 +48,6 @@ public interface Flags {
     return false;
   }
 
-  default boolean enableMobstoreFileServiceWhitelist() {
-    return true;
-  }
-
-  default boolean enableMobstoreFileServiceRename() {
-    return true;
-  }
-
   default boolean enableDebugUi() {
     return false;
   }
