@@ -1,0 +1,555 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+syntax = "proto2";
+
+package mdi.download;
+
+import "google/protobuf/any.proto";
+import "proto/transform.proto";
+
+option java_package = "com.google.mobiledatadownload";
+option java_outer_classname = "DownloadConfigProto";
+option objc_class_prefix = "Icing";
+option go_api_flag = "OPEN_TO_OPAQUE_HYBRID";  // See <internal>.
+
+// The top-level proto for Mobile Data Download (<internal>).
+message DownloadConfig {
+  repeated DataFileGroup data_file_group = 1;
+
+  reserved 2;
+}
+
+// HTTP headers are described in https://tools.ietf.org/html/rfc7230#section-3.2
+// as key:value, where the value may have a whitespace on each end.
+message ExtraHttpHeader {
+  optional string key = 1;
+  optional string value = 2;
+}
+
+// A FileGroup is a set of files that should be atomically updated.
+// Next id: 29
+message DataFileGroup {
+  // Unique name to identify the group. It should be unique per owner package.
+  // In GMSCore, use the module name as the prefix of the group name.
+  //
+  // Ex: A group name in mdisync module could be named: mdisync-profile-photos.
+  //
+  // This shouldn't ideally be something like "config", and
+  // instead should better define the feature it will be used for.
+  //
+  // Ex: "icing-language-detection-model", "smart-action-detection-model"
+  //
+  // IMPORTANT: this group name will be logged to clearcut, and must never
+  // contain PII.
+  optional string group_name = 1;
+
+  // The name of the package that owns this group. If this field is left empty,
+  // the owner is assumed to be the package name of the host app.
+  //
+  // The files will only be downloaded onto the device if the owner package is
+  // present on the device.
+  //
+  // Ex: "com.google.android.gms", "com.google.android.apps.bugle"
+  optional string owner_package = 6;
+
+  // Client set version number used to identify the file group.
+  //
+  // Note that this does not uniquely identify the contents of the file group.
+  // It simply reflects a snapshot of client config changes.
+  // For example: say there's a file group 'language-detector-model' that
+  // downloads a different file per user locale.
+  // data_file_group {
+  //   file_group_name = 'language-detector-model'
+  //   file_group_version_number = 1
+  //   file {
+  //      url = 'en-model'
+  //   }
+  // }
+  // data_file_group {
+  //   file_group_name = 'language-detector-model'
+  //   file_group_version_number = 1
+  //   file {
+  //      url = 'es-model'
+  //   }
+  // }
+  // Note that even though the actual contents of the file group are different
+  // for each locale, the version is the same because this config was pushed
+  // at the same snapshot.
+  //
+  // Available GMS v18+.
+  optional int32 file_group_version_number = 10;
+
+  reserved 20;
+
+  // Custom metadata attached to the file group.
+  //
+  // This allows clients to include specific metadata about the group for their
+  // own processing purposes. The metadata will be stored with the group and
+  // accessible when the file group is retrieved.
+  //
+  // This property should only be used if absolutely necessary. Please consult
+  // with <internal>@ if you have questions about this property or a potential
+  // use-case.
+  //
+  // Available for aMDD Lib only.
+  optional google.protobuf.Any custom_metadata = 27;
+
+  reserved 22;
+
+  reserved 21;
+
+  enum AllowedReaders {
+    ALL_GOOGLE_APPS = 0;
+    ONLY_GOOGLE_PLAY_SERVICES = 1;
+    ALL_APPS = 2;
+  }
+
+  // Defines who is allowed to read this file group. Currently the options are:
+  //
+  // ALL_GOOGLE_APPS: accessible to all Google 1p Apps.
+  // ONLY_GOOGLE_PLAY_SERVICES: accessible to only GMS Core.
+  //
+  // If this field is not explicitly set it defaults to "ALL_GOOGLE_APPS".
+  //
+  // Available GMS v20+.
+  optional AllowedReaders allowed_readers_enum = 12;
+
+  // Length of time (in seconds) for which a file group version will live after
+  // a newer version became fully downloaded. Clients should set this time
+  // to be more than the time in which they call MDD to refresh their data.
+  // NOTE: MDD will delete the file group version within a day of this time.
+  // Ex: 172800  // 2 Days
+  optional int64 stale_lifetime_secs = 3;
+
+  // The timestamp at which this filegroup should be deleted, even if it is
+  // still active, specified in seconds since epoch.
+  // NOTE: MDD will delete the file group version within a day of this time.
+  optional int64 expiration_date = 11;
+
+  // Specify the conditions under which the file group should be downloaded.
+  optional DownloadConditions download_conditions = 13;
+
+  // Setting this flag to true will mean that the downloaded files will appear
+  // to be in a directory by themselves.
+  // The file name/file path of the exposed file will be the filename set in the
+  // file.relative_file_path field, OR if that field is empty, the file name
+  // from the file.url_to_download field. This enables downloaded files to refer
+  // to each other by name.
+  // It's invalid to set this flag to true if two files end up with the same
+  // file path.
+  // Valid on iOS, cMDD, and aMDD.
+  //
+  // NOTE: For aMDD, this feature is not available if Android Blob Sharing is
+  // enabled or if using an API level below 21 (L). If either case is true, this
+  // option will be ignored.
+  optional bool preserve_filenames_and_isolate_files = 14;
+
+  // List of files in the group.
+  repeated DataFile file = 2;
+
+  // Tag for the network traffic to download this file group.
+  // Tag space is determined by the host app.
+  // For Gmscore, the tag should come from:
+  // <internal>
+  optional int32 traffic_tag = 16;
+
+  // Extra HTTP headers to apply when downloading all files in the group.
+  repeated ExtraHttpHeader group_extra_http_headers = 17;
+
+  reserved 19;
+
+  // Unique identifier of a DataFileGroup config (i.e. a "snapshot") created
+  // when using MDD Ingress API.
+  optional int64 build_id = 23;
+
+  // A fingerprint allowing clients to identify a DataFileGroup
+  // config based on a given set of properties (i.e. a "partition" of
+  // any file group properties). This can be used by clients as an exact match
+  // for a class of DataFileGroups during targeting or as a compatibility check.
+  optional string variant_id = 26;
+
+  // The locales compatible with the file group. This can be different from the
+  // device locale.
+  //
+  // Values in this list may be exact locales (e.g. "en-US") or language-only
+  // ("en-*").
+  // Example 1: locale = ["en-US"]; // compatible with "en-US" only
+  // Example 2: locale = ["en-US", "en-CA"]; // compatible with "en-US" or
+  //                                         // "en-CA"
+  // Example 3: locale = ["en-*"]; // compatible with all "en" locales
+  repeated string locale = 25;
+
+  reserved 28;
+
+  reserved 4, 5, 7, 8, 9, 15, 18, 24, 248813966 /*aMDD extension*/,
+      248606552 /*cMDD extension*/;
+}
+
+// A data file represents all the metadata to download the file and then
+// manage it on the device.
+// Next tag: 22
+//
+// This should not contain any fields that are marked internal, as we compare
+// the protos directly to decide if it is a new version of the file.
+// LINT.IfChange(data_file)
+message DataFile {
+  // A unique identifier of the file within the group, that can be used to
+  // get this file from the group.
+  // Ex: "language-detection-model"
+  optional string file_id = 7;
+
+  // Url from where the file is to be downloaded.
+  // Ex: https://www.gstatic.com/group-name/model_1234.zip
+  optional string url_to_download = 2;
+
+  // Exact size of the file. This is used to check if there is space available
+  // for the file before scheduling the download.
+  // The byte_size is optional. If not set, MDD will not be able check the space
+  // available before schedulding the download.
+  optional int32 byte_size = 4;
+
+  // Enum for checksum types.
+  // NOTE: do not add any new checksum type here, older MDD versions would break
+  // otherwise.
+  enum ChecksumType {
+    // Default checksum is SHA1.
+    DEFAULT = 0;
+
+    // No checksum is provided.
+    // This is NOT currently supported by iMDD. Please contact <internal>@ if
+    // you need this feature.
+    NONE = 1;
+
+    // This is currently only supported by cMDD. If you need it for Android or
+    // iOS, please contact MDD team <internal>@.
+    SHA256 = 2;
+  }
+
+  optional ChecksumType checksum_type = 15;
+
+  // SHA1 checksum to verify the file before it can be used. This is also used
+  // to de-duplicate files between different groups.
+  // For most files, this will be the checksum of the file being downloaded.
+  // For files with download_transform, this should contain the transform of
+  // the file after the transforms have been applied.
+  // The checksum is optional. If not set, the checksum_type must be
+  // ChecksumType.NONE.
+  optional string checksum = 5;
+
+  // The following are <internal> transforms to apply to the downloaded files.
+  // Transforms are bi-directional and defined in terms of what they do on
+  // write. Since these transforms are applied while reading, their
+  // directionality is reversed. Eg, you'll see 'compress' to indicate that the
+  // file should be decompressed.
+
+  // These transforms are applied once by MDD after downloading the file.
+  // Currently only compress is available.
+  // Valid on Android. iOS support is tracked by b/118828045.
+  optional mobstore.proto.Transforms download_transforms = 11;
+
+  // If DataFile has download_transforms, this field must be provided with the
+  // SHA1 checksum of the file before any transform are applied. The original
+  // checksum would also be checked after the download_transforms are applied.
+  optional string downloaded_file_checksum = 14;
+
+  // Exact size of the downloaded file. If the DataFile has download transforms
+  // like compress and zip, the downloaded file size would be different than
+  // the final file size on disk. Client could use
+  // this field to track the downloaded file size and calculate the download
+  // progress percentage. This field is not used by MDD currently.
+  optional int32 downloaded_file_byte_size = 16;
+
+  // These transforms are evaluated by the caller on-the-fly when reading the
+  // data with MobStore. Any transforms installed in the caller's MobStore
+  // instance is available.
+  // Valid on Android and cMDD. iOS support is tracked by b/118759254.
+  optional mobstore.proto.Transforms read_transforms = 12;
+
+  // List of delta files that can be encoded and decoded with base files.
+  // If the device has any base file, the delta file which is much
+  // smaller will be downloaded instead of the full file.
+  // For most clients, only one delta file should be enough. If specifying
+  // multiple delta files, they should be in a sequence from the most recent
+  // base file to the oldest.
+  // This is currently only supported on Android.
+  repeated DeltaFile delta_file = 13;
+
+  enum AndroidSharingType {
+    // The dataFile isn't available for sharing.
+    UNSUPPORTED = 0;
+
+    // If sharing with the Android Blob Sharing Service isn't available, fall
+    // back to normal behavior, i.e. download locally.
+    ANDROID_BLOB_WHEN_AVAILABLE = 1;
+  }
+
+  // Defines whether the file should be shared and how.
+  // NOTE: currently this field is only used by aMDD and has no effect on iMDD.
+  optional AndroidSharingType android_sharing_type = 17;
+
+  // Enum for android sharing checksum types.
+  enum AndroidSharingChecksumType {
+    NOT_SET = 0;
+
+    // If the file group should be shared through the Android Blob Sharing
+    // Service, the checksum type must be set to SHA256.
+    SHA2_256 = 1;
+  }
+
+  optional AndroidSharingChecksumType android_sharing_checksum_type = 18;
+
+  // Checksum used to access files through the Android Blob Sharing Service.
+  optional string android_sharing_checksum = 19;
+
+  // Relative file path and file name to be preserved within the parent
+  // directory when creating symlinks for the file groups that have
+  // preserve_filenames_and_isolate_files set to true.
+  // This filename should NOT start or end with a '/', and it can not contain
+  // the substring '..'.
+  // Working example: "subDir/FileName.txt".
+  optional string relative_file_path = 20;
+
+  // Custom metadata attached to the file.
+  //
+  // This allows clients to include specific metadata about the file for their
+  // own processing purposes. The metadata will be stored with the file and
+  // accessible when the file's file group is retrieved.
+  //
+  // This property should only be used if absolutely necessary. Please consult
+  // with <internal>@ if you have questions about this property or a potential
+  // use-case.
+  //
+  // Available for aMDD Lib only.
+  optional google.protobuf.Any custom_metadata = 21;
+
+  reserved 1, 3, 6, 8, 9;
+}
+// LINT.ThenChange(
+//     <internal>,
+//     <internal>)
+
+// A delta file represents all the metadata to download for a diff file encoded
+// based on a base file
+// LINT.IfChange(delta_file)
+message DeltaFile {
+  // These fields all mirror the similarly-named fields in DataFile.
+  optional string url_to_download = 1;
+  optional int32 byte_size = 2;
+  optional string checksum = 3;
+
+  // Enum of all diff decoders supported
+  enum DiffDecoder {
+    // Default to have no diff decoder specified, will thrown unsupported
+    // exception
+    UNSPECIFIED = 0;
+
+    // VcDIFF decoder
+    // Generic Differencing and Compression Data Format
+    // For more information, please refer to rfc3284
+    // The VcDiff decoder for GMS service:
+    // <internal>
+    VC_DIFF = 1;
+  }
+  // The diff decoder used to generate full file with delta and base file.
+  // For MDD as a GMS service, a VcDiff decoder will be registered and injected
+  // in by default. Using MDD as a library, clients need to register and inject
+  // in a VcDiff decoder, otherwise, an exception will be thrown.
+  optional DiffDecoder diff_decoder = 5;
+
+  // The base file represents to a full file on device. It should contain the
+  // bare minimum fields of a DataFile to identify a DataFile on device.
+  optional BaseFile base_file = 6;
+
+  reserved 4;
+}
+// LINT.ThenChange(
+//     <internal>,
+//     <internal>)
+
+message BaseFile {
+  // SHA1 checksum of the base file to identify a file on device. It should
+  // match the checksum field of the base file used to generate the delta file.
+  optional string checksum = 1;
+}
+
+// LINT.IfChange
+// Next id: 5
+message DownloadConditions {
+  // TODO(b/143548753): The first value in an enum must have a specific prefix.
+  enum DeviceStoragePolicy {
+    // MDD will block download of files in android low storage. Currently MDD
+    // doesn't delete the files in case the device reaches low storage
+    // after the file has been downloaded.
+    BLOCK_DOWNLOAD_IN_LOW_STORAGE = 0;
+
+    // Block download of files only under a lower threshold defined here
+    // <internal>
+    BLOCK_DOWNLOAD_LOWER_THRESHOLD = 1;
+
+    // Set the storage threshold to an extremely low value when downloading.
+    // IMPORTANT: if the download make the device runs out of disk, this could
+    // render the device unusable.
+    // This should only be used for critical use cases such as privacy
+    // violations. Emergency fix should not belong to this category. Please
+    // talks to <internal>@ when you want to use this option.
+    EXTREMELY_LOW_THRESHOLD = 2;
+  }
+
+  // Specify the device storage under which the files should be downloaded.
+  // By default, the files will only be downloaded if the device is not in
+  // low storage.
+  optional DeviceStoragePolicy device_storage_policy = 1;
+
+  // TODO(b/143548753): The first value in an enum must have a specific prefix.
+  enum DeviceNetworkPolicy {
+    // Only download files on wifi.
+    DOWNLOAD_ONLY_ON_WIFI = 0;
+
+    // Allow download on any network including wifi and cellular.
+    DOWNLOAD_ON_ANY_NETWORK = 1;
+
+    // Allow downloading only on wifi first, then after a configurable time
+    // period set in the field download_first_on_wifi_period_secs below,
+    // allow downloading on any network including wifi and cellular.
+    DOWNLOAD_FIRST_ON_WIFI_THEN_ON_ANY_NETWORK = 2;
+  }
+
+  // Specify the device network under which the files should be downloaded.
+  // By default, the files will only be downloaded on wifi.
+  //
+  // If your feature targets below v20 and want to download on cellular in
+  // these versions of gms, also set allow_download_without_wifi = true;
+  optional DeviceNetworkPolicy device_network_policy = 2;
+
+  // This field will only be used when the
+  // DeviceNetworkPolicy = DOWNLOAD_FIRST_ON_WIFI_THEN_ON_ANY_NETWORK
+  // MDD will download the file only on wifi for this period of time. If the
+  // download was not finished, MDD will download on any network including
+  // wifi and cellular.
+  // Ex: 604800  // 7 Days
+  optional int64 download_first_on_wifi_period_secs = 4;
+
+  // TODO(b/143548753): The first value in an enum must have a specific prefix.
+  enum ActivatingCondition {
+    // The download is activated as soon the server side config is received and
+    // the server configured download conditions are satisfied.
+    ALWAYS_ACTIVATED = 0;
+
+    // The download is activated when both server side activation conditions
+    // are satisfied and the client has activated the download on device.
+    //
+    // Clients can activate this group using the activateFileGroup API.
+    // <internal>
+    DEVICE_ACTIVATED = 1;
+  }
+
+  // Specify how the download is activated. By default, the download is
+  // activated as soon as server configured activating conditions are satisfied.
+  optional ActivatingCondition activating_condition = 3;
+}
+// LINT.ThenChange(
+// <internal>,
+// <internal>)
+
+message PhConfig {
+  repeated PhClient ph_client = 1;
+}
+
+// Config for a client that wants to download their data file group using
+// a phenotype flag. It contains the phenotype flag name where the client
+// config is present.
+// This is used by clients that want to download data files conditionally. Its
+// current usage is to download webref slices.
+message PhClient {
+  // The phenotype flag name where the config is present.
+  optional string ph_flag_name = 1;
+}
+
+// ManifestConfig to support on device targeting.
+// The ManifestConfig could be in a payload of a PH flag or it could be in the
+// content of a Manifest file. See <internal> for more
+// details.
+// Each ManifestConfig.Entry will have a Modifier and a corresponding
+// DataFileGroup. The Modifier will be used for on device filtering/targeting.
+message ManifestConfig {
+  message Entry {
+    // All the modifier variables are used for filtering/targeting on the device
+    // side. For example, we can specify the locale "en_US" and does the
+    // targeting on the device based on this locale. If you need to add more
+    // fields to Modifier, please email <internal>@.
+    message Modifier {
+      // Locales for which this DataFileGroup is valid.
+      // Locales defined here are application's specific.
+      // It will be consumed by the application's
+      // ManifestConfigFlagPopulator.Overrider to do on-device targeting. The
+      // Overrider will interprete the locales to select best locale matches.
+      // For example, it can invoke the LanguageMatcher [1] to support
+      // "Local Inheritance" [2].
+      // [1]
+      // <internal>
+      // [2] <internal>
+      repeated string locale = 1;
+
+      // Custom Properties.
+      // Defined by each application. The application needs to provide a
+      // ManifestConfigOverrider
+      // (<internal>
+      // that understands and filters entries based on this Custom Properties.
+      optional google.protobuf.Any custom_properties = 2;
+
+      message Location {
+        // S2CellId (<internal>) associated with this DataFileGroup. It will be
+        // used to do location based targeting on device, optionally filtering
+        // extraneous slices if the user has location permissions enabled.
+        // Otherwise location targeting will be based on a rough estimate from
+        // IP-based geolocation on the server. The type fixed64 is a bit more
+        // efficient than int64 for our purposes. This is because int64 uses
+        // prefix encoding, however, for the S2CellIds the high-order bits
+        // encode the face-ID and as a result we often end up with large
+        // numbers.
+        optional fixed64 s2_cell_id = 1;
+      }
+
+      optional Location location = 3;
+    }
+
+    optional Modifier modifier = 1;
+    optional DataFileGroup data_file_group = 2;
+  }
+
+  message UrlTemplate {
+    // Template to construct a {@code DataFile}'s url_to_download on device.
+    // If the url template should be used, the url_to_download field should be
+    // left unpopulated. If the url template and the url_to_download are both
+    // populated, the template will be ignored.
+    optional string file_url_template = 1;
+  }
+
+  repeated Entry entry = 1;
+
+  // Template definition for constructing URLs on device. It applies to every
+  // DataFile defined in the ManifestConfig.
+  optional UrlTemplate url_template = 2;
+}
+
+// The flag that MDD gets from P/H, and contains information about the manifest
+// file to be downloaded.
+// Next id: 3
+message ManifestFileFlag {
+  // The ID for the manifest file. This should be unique in the host app space.
+  optional string manifest_id = 1;
+
+  // The url to the manifest file on Google hosting service.
+  optional string manifest_file_url = 2;
+}

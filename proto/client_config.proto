@@ -1,0 +1,136 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+syntax = "proto2";
+
+package com.google.android.libraries.mdi.download;
+
+import "google/protobuf/any.proto";
+
+option jspb_use_correct_proto2_semantics = false;  // <internal>
+option java_package = "com.google.mobiledatadownload";
+option java_outer_classname = "ClientConfigProto";
+option objc_class_prefix = "ICN";
+
+// Next id: 15
+message ClientFileGroup {
+  // Unique name to identify the group, that the client wants to read.
+  optional string group_name = 1;
+
+  optional string owner_package = 3;
+
+  // The account associated to the file group.
+  optional string account = 6;
+
+  optional int32 version_number = 4;
+
+  enum Status {
+    UNSPECIFIED = 0;
+
+    // This group is downloaded and ready to use.
+    DOWNLOADED = 1;
+
+    // This group is pending download, and should be downloaded by calling
+    // the download API before it can be used.
+    //
+    // file.file_uri will not be set if the status is set to pending.
+    PENDING = 2;
+
+    // This group has finished downloading, but custom validation has
+    // not yet been performed. This state is only expected to be seen
+    // in the CustomFileGroupValidator.
+    PENDING_CUSTOM_VALIDATION = 3;
+  }
+
+  // Status of the client file group.
+  optional Status status = 5;
+
+  // List of files in the group.
+  repeated ClientFile file = 2;
+
+  // Unique identifier of a DataFileGroup config (i.e. a "snapshot") created
+  // when using MDD Ingress API.
+  //
+  // NOTE: This field name and description are not finalized yet! Reach out to
+  // <internal>@ to discuss using this field.
+  optional int64 build_id = 8;
+
+  // A fingerprint allowing clients to identify a DataFileGroup
+  // config based on a given set of properties (i.e. a "partition" of
+  // any file group properties). This can be used by clients as an exact match
+  // for a class of DataFileGroups during targeting or as a compatibility check.
+  //
+  // NOTE: This field name and description are not finalized yet! Reach out to
+  // <internal>@ to discuss using this field.
+  optional string variant_id = 12;
+
+  // The locales compatible with the file group. This can be different from the
+  // device locale.
+  //
+  // Values in this list may be exact locales (e.g. "en-US") or language-only
+  // ("en-*").
+  // Example 1: locale = ["en-US"]; // compatible with "en-US" only
+  // Example 2: locale = ["en-US", "en-CA"]; // compatible with "en-US" or
+  //                                         // "en-CA"
+  // Example 3: locale = ["en-*"]; // compatible with all "en" locales
+  repeated string locale = 10;
+
+  reserved 11;
+
+  // Custom metadata attached to the group.
+  //
+  // This allows clients to include specific metadata about the group for their
+  // own processing purposes. The metadata must be included when the group is
+  // added to MDD, then it will be available here when retrieving the group.
+  //
+  // This property should only be used if absolutely necessary. Please consult
+  // with <internal>@ if you have questions about this property or a potential
+  // use-case.
+  optional .google.protobuf.Any custom_metadata = 13;
+
+  reserved 14;
+
+  reserved 7, 9;
+}
+
+// Next id: 6
+message ClientFile {
+  // Unique name to identify the file within the group.
+  optional string file_id = 1;
+
+  // File Uri that can be opened using FileStorage library (<internal>).
+  optional string file_uri = 2;
+
+  // The full size of the file as specified in byte_size field of the config
+  // given to MDD. For files unzipped from zip file with zip download
+  // transforms, it will be the actual file size on disk.
+  optional int32 full_size_in_bytes = 3;
+
+  // The download size of the file as specified in downloaded_file_byte_size
+  // field (<internal>) of the
+  // config given to MDD. It could be used to track and calculate the download
+  // progress.
+  optional int32 download_size_in_bytes = 4;
+
+  // Custom metadata attached to the file
+  //
+  // This allows clients to include specific metadata about the file for their
+  // own processing purposes. The metadata must be included when the file's
+  // group is added to MDD, then it will be available here when retrieving the
+  // containing group.
+  //
+  // This property should only be used if absolutely necessary. Please consult
+  // with <internal>@ if you have questions about this property or a potential
+  // use-case.
+  optional .google.protobuf.Any custom_metadata = 5;
+}

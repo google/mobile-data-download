@@ -1,0 +1,88 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+syntax = "proto2";
+
+package mobstore.proto;
+
+option java_package = "com.google.mobiledatadownload";
+option java_outer_classname = "TransformProto";
+option objc_class_prefix = "MOB";
+
+// Description of transforms that are to be applied by MobStore to a stream.
+//
+// Following MobStore convention, they are applied in the order in which they
+// appear on write, and reverse on read. Serialization as a URI fragment
+// preserves order.
+//
+// eg "transform=compress+encrypt(aes_gcm_key=12345)"
+message Transforms {
+  repeated Transform transform = 1;
+}
+
+// Specification for an individual transform.
+message Transform {
+  oneof transform {
+    CompressTransform compress = 1;
+    EncryptTransform encrypt = 2;
+    IntegrityTransform integrity = 3;
+    ZipTransform zip = 4;
+    CustomTransform custom = 5;
+  }
+}
+
+// The compression transform. It has no parameters.
+//
+// eg "compress"
+message CompressTransform {}
+
+// The encryption transform. If no params are given, it uses the keystore
+// to manage keys. Alternatively, the key can be stored in the URI itself.
+//
+// eg "encrypt", "encrypt(aes_gcm_key=12345)"
+message EncryptTransform {
+  oneof key {
+    string aes_gcm_key_base64 = 1;
+  }
+}
+
+// The integrity transform. If the hash is included, it can be verified.
+// Otherwise, it can be retrieved after reading or writing with the
+// ComputedUri API.
+//
+// eg "integrity", "integrity(sha256=12345)"
+message IntegrityTransform {
+  oneof hash {
+    string sha256 = 1;
+  }
+}
+
+// The ZIP decompress transform. It requires a target file param.
+message ZipTransform {
+  // required
+  optional string target = 1;
+}
+
+// A custom transform. The transform with the specified name must be registered
+// with MobStore FileStorage.
+message CustomTransform {
+  // required
+  optional string name = 1;
+
+  message SubParam {
+    // required
+    optional string key = 1;
+    optional string value = 2;
+  }
+  repeated SubParam subparam = 2;
+}

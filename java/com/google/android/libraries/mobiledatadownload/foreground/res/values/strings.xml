@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+/*
+ * Copyright 2022 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
+<resources>
+  <!-- Notification title that is shown when MDD is
+    downloading a file.[CHAR_LIMIT=80] -->
+  <string name="mdd_foreground_service_notification_title">
+    Downloading
+  </string>
+
+  <!-- Notification channel group that is shown when long pressing any notification.
+[CHAR_LIMIT=80] -->
+  <string name="mdd_download_notification_channel_name">
+    Data Download Notification Channel
+  </string>
+
+  <!-- Notification title that is shown for every file that is currently
+    downloading but is temporary paused due to network connection. [CHAR_LIMIT=80] -->
+  <string name="mdd_notification_download_paused">
+    Waiting for network connection
+  </string>
+
+  <!-- Notification title that is shown for every file that was successfully
+    downloaded.[CHAR_LIMIT=80] -->
+  <string name="mdd_notification_download_success">
+    Downloaded
+  </string>
+
+  <!-- Notification title that is shown for every file that failed to download.
+    [CHAR_LIMIT=80] -->
+  <string name="mdd_notification_download_failed">
+    Download failed
+  </string>
+
+  <!-- The cancel action menu.[CHAR_LIMIT=80] -->
+  <string name="mdd_notification_action_cancel">
+    Cancel
+  </string>
+</resources>
