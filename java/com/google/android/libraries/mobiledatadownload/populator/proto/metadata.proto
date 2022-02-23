@@ -1,0 +1,46 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+syntax = "proto2";
+
+package mdi.download.populator;
+
+option java_package = "com.google.mobiledatadownload.populator";
+option java_outer_classname = "MetadataProto";
+
+// Bookkeeps the metadata of manifest file.
+// Next tag: 4
+message ManifestFileBookkeeping {
+  // The url where the manifest file is served.
+  optional string manifest_file_url = 3;
+
+  // The cached ETag that is fetched from the target url and stored on device.
+  // This is used for content change detection.
+  optional string cached_etag = 1;
+
+  // The status of downloading the manifest file.
+  enum Status {
+    INVALID = 0;
+
+    // The file is absent or the download has started.
+    PENDING = 1;
+
+    // The download has completed but the file has not been parsed.
+    DOWNLOADED = 2;
+
+    // The file was parsed and file groups were added to MDD.
+    COMMITTED = 3;
+  }
+
+  optional Status status = 2;
+}
