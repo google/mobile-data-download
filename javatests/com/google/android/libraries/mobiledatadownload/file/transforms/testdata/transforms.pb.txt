@@ -1,0 +1,13 @@
+transform {
+  compress {}
+}
+transform {
+  encrypt {
+    aes_gcm_key_base64: "a+bc"
+  }
+}
+transform {
+  integrity {
+    sha256: "ab+c"
+  }
+}

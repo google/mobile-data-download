@@ -1,0 +1,18 @@
+allowed_readers_enum: ALL_GOOGLE_APPS
+file {
+  checksum_type: NONE
+  file_id: "one"
+  url_to_download: "https://www.google.com/"
+}
+file {
+  checksum_type: NONE
+  file_id: "two"
+  url_to_download: "https://www.instagram.com/"
+}
+file {
+  checksum_type: NONE
+  file_id: "three"
+  url_to_download: "https://stackoverflow.com/"
+}
+group_name: "test-group"
+owner_package: "com.google.android.libraries.mobiledatadownload"

@@ -1,0 +1,379 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+load("//tools/build_defs/testing:bzl_library.bzl", "bzl_library")
+load("//javatests/com/google/android/libraries/mobiledatadownload:test_defs.bzl", "mdd_android_test", "mdd_local_test")
+load("@build_bazel_rules_android//android:rules.bzl", "android_local_test")
+
+package(
+    default_visibility = ["//:__subpackages__"],
+    licenses = ["notice"],
+)
+
+mdd_local_test(
+    name = "MobileDataDownloadTest",
+    srcs = ["MobileDataDownloadTest.java"],
+    test_class = "com.google.android.libraries.mobiledatadownload.MobileDataDownloadTest",
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadListener",
+        "//java/com/google/android/libraries/mobiledatadownload:FileSource",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
+        "//java/com/google/android/libraries/mobiledatadownload:UsageEvent",
+        "//java/com/google/android/libraries/mobiledatadownload/account:AccountUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
+        "//java/com/google/android/libraries/mobiledatadownload/internal:MobileDataDownloadManager",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:EventLogger",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/util:ProtoConversionUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/lite",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
+        "//proto:client_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@com_google_protobuf//:any_proto",
+        "@com_google_protobuf//:protobuf_lite",
+        "@com_google_protobuf//:wrappers_proto",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+android_local_test(
+    name = "AggregateExceptionTest",
+    srcs = ["AggregateExceptionTest.java"],
+    manifest_values = {
+        "minSdkVersion": "16",
+        "targetSdkVersion": "27",
+    },
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload:AggregateException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "@com_google_guava_guava",
+        "@truth",
+    ],
+)
+
+android_local_test(
+    name = "DownloadExceptionTest",
+    srcs = ["DownloadExceptionTest.java"],
+    manifest_values = {
+        "minSdkVersion": "16",
+        "targetSdkVersion": "27",
+    },
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "@com_google_guava_guava",
+        "@truth",
+    ],
+)
+
+mdd_android_test(
+    name = "MobileDataDownloadIntegrationTest",
+    size = "large",
+    srcs = [
+        "MobileDataDownloadIntegrationTest.java",
+        "TestFileGroupPopulator.java",
+        "TwoStepPopulator.java",
+        "ZipFolderFileGroupPopulator.java",
+    ],
+    data = [
+        "//javatests/com/google/android/libraries/mobiledatadownload/testdata:integration_test_data_files",
+    ],
+    manifest = "//javatests/com/google/android/libraries/mobiledatadownload/testing:AndroidManifest.xml",
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:AggregateException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
+        "//java/com/google/android/libraries/mobiledatadownload:Logger",
+        "//java/com/google/android/libraries/mobiledatadownload:MobileDataDownloadBuilder",
+        "//java/com/google/android/libraries/mobiledatadownload/account:AccountUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android_adapter",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:string",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/util:DirectoryUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:BlockingFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:FakeTimeSource",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFlags",
+        "//proto:client_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
+        "//proto:transform_java_proto_lite",
+        "@android_sdk_linux",
+        "@androidx_core_core",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@cronet-api",
+        "@junit",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+mdd_android_test(
+    name = "DownloadFileGroupIntegrationTest",
+    size = "large",
+    srcs = [
+        "DownloadFileGroupIntegrationTest.java",
+        "TestFileGroupPopulator.java",
+    ],
+    manifest = "AndroidManifest.xml",
+    tags = ["requires-net:external"],
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:AggregateException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadListener",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
+        "//java/com/google/android/libraries/mobiledatadownload:MobileDataDownloadBuilder",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad/dagger/downloader2:base",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad/dagger/downloader2:base_deps",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2_sp",
+        "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:BlockingFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFlags",
+        "//proto:client_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
+        "@android_sdk_linux",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@cronet-api",
+        "@junit",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+mdd_android_test(
+    name = "DownloadFileGroupAndroidSharingIntegrationTest",
+    size = "large",
+    timeout = "long",
+    srcs = [
+        "DownloadFileGroupAndroidSharingIntegrationTest.java",
+        "TestFileGroupPopulator.java",
+    ],
+    data = [
+        "//javatests/com/google/android/libraries/mobiledatadownload/testdata:integration_test_data_files",
+    ],
+    manifest = "//javatests/com/google/android/libraries/mobiledatadownload/testing:AndroidManifest.xml",
+    target_devices = ["//tools/android/emulated_devices/generic_phone:google_30_x86"],  # Blob Sharing available in R+
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadListener",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
+        "//java/com/google/android/libraries/mobiledatadownload:Logger",
+        "//java/com/google/android/libraries/mobiledatadownload:MobileDataDownloadBuilder",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:blob_uri",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:blobstore_backend",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFlags",
+        "//proto:client_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
+        "@android_sdk_linux",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@junit",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+mdd_local_test(
+    name = "DownloadFileTest",
+    srcs = ["DownloadFileTest.java"],
+    test_class = "com.google.android.libraries.mobiledatadownload.DownloadFileTest",
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadListener",
+        "//java/com/google/android/libraries/mobiledatadownload:MobileDataDownloadBuilder",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/lite:DownloadListener",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:BlockingFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:FakeTimeSource",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFlags",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@cronet-api",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+mdd_android_test(
+    name = "DownloadFileIntegrationTest",
+    size = "large",
+    srcs = [
+        "DownloadFileIntegrationTest.java",
+    ],
+    manifest = "AndroidManifest.xml",
+    tags = ["requires-net:external"],
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:AggregateException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadListener",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
+        "//java/com/google/android/libraries/mobiledatadownload:MobileDataDownloadBuilder",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad/dagger/downloader2:base",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad/dagger/downloader2:base_deps",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2_sp",
+        "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:BlockingFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:FakeTimeSource",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFlags",
+        "//proto:client_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
+        "@android_sdk_linux",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@cronet-api",
+        "@junit",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+mdd_android_test(
+    name = "ImportFilesIntegrationTest",
+    size = "large",
+    srcs = [
+        "ImportFilesIntegrationTest.java",
+        "TestFileGroupPopulator.java",
+    ],
+    data = [
+        "//javatests/com/google/android/libraries/mobiledatadownload/testdata:integration_test_data_files",
+    ],
+    manifest = "//javatests/com/google/android/libraries/mobiledatadownload/testing:AndroidManifest.xml",
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:AggregateException",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "//java/com/google/android/libraries/mobiledatadownload:FileSource",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
+        "//java/com/google/android/libraries/mobiledatadownload:MobileDataDownloadBuilder",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/inline:InlineFileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad/dagger/downloader2:base",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad/dagger/downloader2:base_deps",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing:fake_file_backend",
+        "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2_sp",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
+        "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:BlockingFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFlags",
+        "//proto:client_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
+        "@android_sdk_linux",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@com_google_protobuf//:protobuf_lite",
+        "@cronet-api",
+        "@junit",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+mdd_android_test(
+    name = "MddGarbageCollectionWithAndroidSharingIntegrationTest",
+    size = "large",
+    timeout = "long",
+    srcs = [
+        "MddGarbageCollectionWithAndroidSharingIntegrationTest.java",
+        "TestFileGroupPopulator.java",
+    ],
+    data = [
+        "//javatests/com/google/android/libraries/mobiledatadownload/testdata:integration_test_data_files",
+    ],
+    manifest = "//javatests/com/google/android/libraries/mobiledatadownload/testing:AndroidManifest.xml",
+    target_devices = ["//tools/android/emulated_devices/generic_phone:google_30_x86"],  # Blob Sharing available in R+
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:DownloadListener",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
+        "//java/com/google/android/libraries/mobiledatadownload:Logger",
+        "//java/com/google/android/libraries/mobiledatadownload:MobileDataDownloadBuilder",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:blob_uri",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:blobstore_backend",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
+        "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
+        "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
+        "//javatests/com/google/android/libraries/mobiledatadownload/internal:MddTestUtil",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFileDownloader",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestFlags",
+        "//proto:client_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
+        "@android_sdk_linux",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@junit",
+        "@mockito",
+        "@truth",
+    ],
+)
+
+bzl_library(
+    name = "test_defs_bzl",
+    srcs = ["test_defs.bzl"],
+    parse_tests = False,
+    deps = [
+        "//devtools/build_cleaner/skylark:build_defs_lib",
+        "//devtools/deps/check:deps_check",
+        "//tools/build_defs/android:rules_bzl",
+    ],
+)

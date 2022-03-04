@@ -1,0 +1,21 @@
+allowed_readers_enum: ALL_GOOGLE_APPS
+download_conditions {
+  device_network_policy: DOWNLOAD_FIRST_ON_WIFI_THEN_ON_ANY_NETWORK
+}
+file_group_version_number: 12
+file {
+  byte_size: 200
+  checksum: "checksum1"
+  file_id: "one"
+  url_to_download: "https://www.google.com/"
+}
+file {
+  byte_size: 500
+  checksum: "checksum2"
+  file_id: "two"
+  url_to_download: "https://www.instagram.com/"
+}
+group_name: "test-group"
+owner_package: "com.google.android.libraries.mobiledatadownload"
+stale_lifetime_secs: 123456
+traffic_tag: 3
