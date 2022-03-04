@@ -168,7 +168,9 @@ public final class Fragment {
     private final String key;
     private final List<ParamValue> values = new ArrayList<ParamValue>();
 
-    /** @throws IllegalArgumentException if {@code values} is empty. */
+    /**
+     * @throws IllegalArgumentException if {@code values} is empty.
+     */
     private Param(String key, List<ParamValue> values) {
       Preconditions.checkArgument(!values.isEmpty(), "Missing param values");
       this.key = key;

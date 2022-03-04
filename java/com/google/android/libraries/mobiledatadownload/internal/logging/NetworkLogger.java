@@ -15,7 +15,6 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.logging;
 
-import static com.google.android.libraries.mobiledatadownload.tracing.TracePropagation.propagateFunction;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
@@ -23,17 +22,17 @@ import android.content.Context;
 import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.internal.ApplicationContext;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.internal.MetadataProto.FileGroupLoggingState;
+import java.util.List;
 import javax.inject.Inject;
 
 /**
  * Log MDD network stats at daily maintenance. For each file group, it will log the total bytes
  * downloaded on Wifi and Cellular and also total bytes downloaded by MDD on Wifi and Cellular.
  */
-// TODO(b/191042900): determine whether days_since_last_log will help with network logging as it is
-// set up now.
 public class NetworkLogger {
 
   private final EventLogger eventLogger;
@@ -57,30 +56,22 @@ public class NetworkLogger {
       return immediateVoidFuture();
     }
 
-    // If the log is going to be sampled, don't bother going through the calculations.
-    int sampleInterval = flags.networkStatsLoggingSampleInterval();
+    // Clear the accumulated network usage even if the device isn't logging, otherwise with 1%
+    // sampling, we could potentially log network usage for up to 100 days.
+    ListenableFuture<List<FileGroupLoggingState>> allDataUsageFuture =
+        loggingStateStore.getAndResetAllDataUsage();
 
-    if (!LogUtil.shouldSampleInterval(sampleInterval)) {
-      // Clear the accumulative network usage. Otherwise with 1% sampling, we could
-      // potentially log network usage for up to 100 days.
-      return Futures.transform(
-          loggingStateStore.getAndResetAllDataUsage(),
-          propagateFunction(unused -> null),
-          directExecutor());
-    }
+    return eventLogger.logMddNetworkStats(
+        () ->
+            PropagatedFutures.transform(
+                allDataUsageFuture, this::buildNetworkStats, directExecutor()));
+  }
 
-    return Futures.transform(
-        loggingStateStore.getAndResetAllDataUsage(),
-        propagateFunction(
-            allFileGroupLoggingState -> {
-              long totalMddWifiCount = 0;
-              long totalMddCellularCount = 0;
-              Void networkStatsBuilder = null;
+  private Void buildNetworkStats(List<FileGroupLoggingState> allDataUsage) {
+    long totalMddWifiCount = 0;
+    long totalMddCellularCount = 0;
+    Void networkStatsBuilder = null;
 
-              eventLogger.logMddNetworkStatsAfterSample(networkStatsBuilder, sampleInterval);
-
-              return null;
-            }),
-        directExecutor());
+    return networkStatsBuilder;
   }
 }

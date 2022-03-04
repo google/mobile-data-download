@@ -15,10 +15,17 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.downloader;
 
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
+
 import android.net.Uri;
+import android.os.Build.VERSION;
+import android.os.Build.VERSION_CODES;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
+import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.openers.ReadStreamOpener;
 import com.google.android.libraries.mobiledatadownload.file.openers.RecursiveSizeOpener;
@@ -29,14 +36,16 @@ import com.google.android.libraries.mobiledatadownload.internal.downloader.MddFi
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.io.ByteStreams;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
 import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
+import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -60,6 +69,7 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
   private final int fileGroupVersionNumber;
   private final long buildId;
   private final String variantId;
+  private final Flags flags;
   private final Executor sequentialControlExecutor;
 
   public DownloaderCallbackImpl(
@@ -72,6 +82,7 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
       int fileGroupVersionNumber,
       long buildId,
       String variantId,
+      Flags flags,
       Executor sequentialControlExecutor) {
     this.sharedFilesMetadata = sharedFilesMetadata;
     this.fileStorage = fileStorage;
@@ -83,6 +94,7 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
     this.fileGroupVersionNumber = fileGroupVersionNumber;
     this.buildId = buildId;
     this.variantId = variantId;
+    this.flags = flags;
     this.sequentialControlExecutor = sequentialControlExecutor;
   }
 
@@ -104,7 +116,36 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
         handleDownloadTransform(fileUri);
       }
     } catch (DownloadException exception) {
-      return Futures.immediateFailedFuture(exception);
+      if (exception
+          .getDownloadResultCode()
+          .equals(DownloadResultCode.DOWNLOADED_FILE_CHECKSUM_MISMATCH_ERROR)) {
+        // File was downloaded successfully, but failed checksum mismatch error. Attempt to delete
+        // the file, then fail with the given exception.
+        return PropagatedFluentFuture.from(
+                maybeDeleteFileOnChecksumMismatch(
+                    sharedFilesMetadata,
+                    dataFile,
+                    allowedReaders,
+                    fileStorage,
+                    fileUri,
+                    checksum,
+                    eventLogger,
+                    flags,
+                    sequentialControlExecutor))
+            .catchingAsync(
+                IOException.class,
+                ioException -> {
+                  // Delete on checksum failed, add it as a suppressed exception if supported (API
+                  // level 19 or higher).
+                  if (VERSION.SDK_INT >= VERSION_CODES.KITKAT) {
+                    exception.addSuppressed(ioException);
+                  }
+                  return immediateVoidFuture();
+                },
+                sequentialControlExecutor)
+            .transformAsync(unused -> immediateFailedFuture(exception), sequentialControlExecutor);
+      }
+      return immediateFailedFuture(exception);
     }
 
     return updateFileStatus(
@@ -116,8 +157,18 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
   }
 
   @Override
-  public ListenableFuture<Void> onDownloadFailed() {
+  public ListenableFuture<Void> onDownloadFailed(DownloadException exception) {
     LogUtil.d("%s: Failed to download file %s", TAG, checksum);
+    if (exception
+        .getDownloadResultCode()
+        .equals(DownloadResultCode.DOWNLOADED_FILE_CHECKSUM_MISMATCH_ERROR)) {
+      return updateFileStatus(
+          FileStatus.CORRUPTED,
+          dataFile,
+          allowedReaders,
+          sharedFilesMetadata,
+          sequentialControlExecutor);
+    }
     return updateFileStatus(
         FileStatus.DOWNLOAD_FAILED,
         dataFile,
@@ -173,7 +224,9 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
         buildId,
         variantId,
         dataFile);
-    if (!FileValidator.verifyChecksum(fileStorage, finalFileUri, checksum)) {
+    // Verify original checksum if provided.
+    if (dataFile.getChecksumType() != DataFile.ChecksumType.NONE
+        && !FileValidator.verifyChecksum(fileStorage, finalFileUri, checksum)) {
       LogUtil.e("%s: Final file checksum verification failed. %s.", TAG, finalFileUri);
       throw DownloadException.builder()
           .setDownloadResultCode(DownloadResultCode.FINAL_FILE_CHECKSUM_MISMATCH_ERROR)
@@ -272,6 +325,86 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
     return fileStorage.open(uri, RecursiveSizeOpener.create());
   }
 
+  /** Get {@link SharedFile} or fail with {@link DownloadException}. */
+  private static ListenableFuture<SharedFile> getSharedFileOrFail(
+      SharedFilesMetadata sharedFilesMetadata,
+      NewFileKey newFileKey,
+      Executor sequentialControlExecutor) {
+    return PropagatedFutures.transformAsync(
+        sharedFilesMetadata.read(newFileKey),
+        sharedFile -> {
+          // Cannot find the file metadata, fail to update the file status.
+          if (sharedFile == null) {
+            // TODO(b/131166925): MDD dump should not use lite proto toString.
+            LogUtil.e("%s: Shared file not found, newFileKey = %s", TAG, newFileKey);
+            return immediateFailedFuture(
+                DownloadException.builder()
+                    .setDownloadResultCode(DownloadResultCode.SHARED_FILE_NOT_FOUND_ERROR)
+                    .build());
+          }
+
+          return immediateFuture(sharedFile);
+        },
+        sequentialControlExecutor);
+  }
+
+  /**
+   * Maybe delete on-device file after a completed download when a checksum mismatch occurs.
+   *
+   * <p>When a checksum mismatch occurs after a completed download, it's possible that the data has
+   * been corrupted on-disk. In this event, we should delete the on-disk file so it can be
+   * redownloaded again in a non-corrupted state.
+   *
+   * <p>However, it's also possible that a bad config was sent with a wrong checksum. In this event,
+   * the on-disk file may not be corrupted, so deleting it could lead to an increase in network
+   * bandwidth usage.
+   *
+   * <p>In order to balance the two cases, MDD will start to delete the on-disk file, but after a
+   * certain number of retries, this deletion will be skipped to prevent unnecessary network
+   * bandwidth usage.
+   *
+   * <p>This future may return a failed future with an IOException if attempting to delete the file
+   * fails.
+   */
+  static ListenableFuture<Void> maybeDeleteFileOnChecksumMismatch(
+      SharedFilesMetadata sharedFilesMetadata,
+      DataFile dataFile,
+      AllowedReaders allowedReaders,
+      SynchronousFileStorage fileStorage,
+      Uri fileUri,
+      String checksum,
+      EventLogger eventLogger,
+      Flags flags,
+      Executor sequentialControlExecutor) {
+    NewFileKey newFileKey = SharedFilesMetadata.createKeyFromDataFile(dataFile, allowedReaders);
+    return PropagatedFluentFuture.from(
+            getSharedFileOrFail(sharedFilesMetadata, newFileKey, sequentialControlExecutor))
+        .transformAsync(
+            sharedFile -> {
+              if (sharedFile.getChecksumMismatchRetryDownloadCount()
+                  >= flags.downloaderMaxRetryOnChecksumMismatchCount()) {
+                LogUtil.d(
+                    "%s: Checksum mismatch detected but the has already reached retry limit!"
+                        + " Skipping removal for file %s",
+                    TAG, checksum);
+                eventLogger.logEventSampled(0);
+              } else {
+                LogUtil.d(
+                    "%s: Removing file and marking as corrupted due to checksum mismatch", TAG);
+                try {
+                  fileStorage.deleteFile(fileUri);
+                } catch (IOException e) {
+                  // Deleting the corrupted file is best effort, the next time MDD attempts to
+                  // download, we will try again to delete the file. For now, just log this error.
+                  LogUtil.e(e, "%s: Failed to remove corrupted file %s", TAG, checksum);
+                  return immediateFailedFuture(e);
+                }
+              }
+              return immediateVoidFuture();
+            },
+            sequentialControlExecutor);
+  }
+
   /**
    * Find the file metadata and update the file status. Throws {@link DownloadException} if the file
    * status failed to be updated.
@@ -284,37 +417,35 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
       Executor sequentialControlExecutor) {
     NewFileKey newFileKey = SharedFilesMetadata.createKeyFromDataFile(dataFile, allowedReaders);
 
-    return Futures.transformAsync(
-        sharedFilesMetadata.read(newFileKey),
-        sharedFile -> {
-          // Cannot find the file metadata, fail to update the file status.
-          if (sharedFile == null) {
-            // TODO(b/131166925): MDD dump should not use lite proto toString.
-            LogUtil.e("%s: Shared file not found, newFileKey = %s", TAG, newFileKey);
-            return Futures.immediateFailedFuture(
-                DownloadException.builder()
-                    .setDownloadResultCode(DownloadResultCode.SHARED_FILE_NOT_FOUND_ERROR)
-                    .build());
-          }
-          sharedFile = sharedFile.toBuilder().setFileStatus(fileStatus).build();
-          return Futures.transformAsync(
-              sharedFilesMetadata.write(newFileKey, sharedFile),
-              writeSuccess -> {
-                if (!writeSuccess) {
-                  // TODO(b/131166925): MDD dump should not use lite proto toString.
-                  LogUtil.e(
-                      "%s: Unable to write back download info for file entry with %s",
-                      TAG, newFileKey);
-                  return Futures.immediateFailedFuture(
-                      DownloadException.builder()
-                          .setDownloadResultCode(
-                              DownloadResultCode.UNABLE_TO_UPDATE_FILE_STATE_ERROR)
-                          .build());
-                }
-                return Futures.immediateFuture(null);
-              },
-              sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+    return PropagatedFluentFuture.from(
+            getSharedFileOrFail(sharedFilesMetadata, newFileKey, sequentialControlExecutor))
+        .transformAsync(
+            sharedFile -> {
+              SharedFile.Builder sharedFileBuilder =
+                  sharedFile.toBuilder().setFileStatus(fileStatus);
+              if (fileStatus.equals(FileStatus.CORRUPTED)) {
+                // Corrupted state indicates a checksum mismatch failure, so increment the retry
+                // download count.
+                sharedFileBuilder.setChecksumMismatchRetryDownloadCount(
+                    sharedFile.getChecksumMismatchRetryDownloadCount() + 1);
+              }
+              return sharedFilesMetadata.write(newFileKey, sharedFileBuilder.build());
+            },
+            sequentialControlExecutor)
+        .transformAsync(
+            writeSuccess -> {
+              if (!writeSuccess) {
+                // TODO(b/131166925): MDD dump should not use lite proto toString.
+                LogUtil.e(
+                    "%s: Unable to write back download info for file entry with %s",
+                    TAG, newFileKey);
+                return immediateFailedFuture(
+                    DownloadException.builder()
+                        .setDownloadResultCode(DownloadResultCode.UNABLE_TO_UPDATE_FILE_STATE_ERROR)
+                        .build());
+              }
+              return immediateVoidFuture();
+            },
+            sequentialControlExecutor);
   }
 }

@@ -15,6 +15,12 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.logging;
 
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
+
+import com.google.common.util.concurrent.AsyncCallable;
+import com.google.common.util.concurrent.ListenableFuture;
+import java.util.List;
+
 /** No-Op EventLogger implementation. */
 public final class NoOpEventLogger implements EventLogger {
 
@@ -33,17 +39,23 @@ public final class NoOpEventLogger implements EventLogger {
   public void logEventAfterSample(int eventCode, int sampleInterval) {}
 
   @Override
-  public void logMddFileGroupStatsAfterSample(
-      Void fileGroupDetails, Void fileGroupStatus, int sampleInterval) {}
+  public ListenableFuture<Void> logMddFileGroupStats(
+      AsyncCallable<List<EventLogger.FileGroupStatusWithDetails>> buildFileGroupStats) {
+    return immediateVoidFuture();
+  }
 
   @Override
   public void logMddApiCallStats(Void fileGroupDetails, Void apiCallStats) {}
 
   @Override
-  public void logMddStorageStatsAfterSample(Void mddStorageStats, int sampleInterval) {}
+  public ListenableFuture<Void> logMddStorageStats(AsyncCallable<Void> buildMddStorageStats) {
+    return immediateVoidFuture();
+  }
 
   @Override
-  public void logMddNetworkStatsAfterSample(Void mddNetworkStats, int sampleInterval) {}
+  public ListenableFuture<Void> logMddNetworkStats(AsyncCallable<Void> buildMddNetworkStats) {
+    return immediateVoidFuture();
+  }
 
   @Override
   public void logMddDataDownloadFileExpirationEvent(int eventCode, int count) {}

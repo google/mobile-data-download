@@ -19,7 +19,6 @@ import static com.google.android.libraries.mobiledatadownload.internal.MddConsta
 
 import android.content.Context;
 import android.util.Pair;
-import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
@@ -30,6 +29,10 @@ import com.google.android.libraries.mobiledatadownload.internal.SharedFileManage
 import com.google.android.libraries.mobiledatadownload.internal.SharedFileMissingException;
 import com.google.android.libraries.mobiledatadownload.internal.SharedFilesMetadata;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
+import com.google.auto.value.AutoValue;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
@@ -65,15 +68,26 @@ public class StorageLogger {
   private final SilentFeedback silentFeedback;
   private final Optional<String> instanceId;
   private final Executor sequentialControlExecutor;
-  private final Flags flags;
 
   /** Store the storage stats for a file group. */
   static class GroupStorage {
-    // The sum of all on-disk file sizes of the files belong to this file group, in bytes.
+    // The sum of all on-disk file sizes of the files belonging to this file group, in bytes.
     public long totalBytesUsed;
+
+    // The sum of all on-disk inline file sizes of the files belonging to this file group, in bytes.
+    public long totalInlineBytesUsed;
 
     // The sum of all on-disk file sizes of this downloaded file group in bytes.
     public long downloadedGroupBytesUsed;
+
+    // The sum of all on-disk inline files sizes of this downloaded file group in bytes.
+    public long downloadedGroupInlineBytesUsed;
+
+    // The total number of files in the group.
+    public int totalFileCount;
+
+    // The number of inline files in the group.
+    public int totalInlineFileCount;
   }
 
   @Inject
@@ -85,8 +99,7 @@ public class StorageLogger {
       EventLogger eventLogger,
       SilentFeedback silentFeedback,
       @InstanceId Optional<String> instanceId,
-      @SequentialControlExecutor Executor sequentialControlExecutor,
-      Flags flags) {
+      @SequentialControlExecutor Executor sequentialControlExecutor) {
     this.context = context;
     this.fileGroupsMetadata = fileGroupsMetadata;
     this.sharedFileManager = sharedFileManager;
@@ -95,7 +108,6 @@ public class StorageLogger {
     this.silentFeedback = silentFeedback;
     this.instanceId = instanceId;
     this.sequentialControlExecutor = sequentialControlExecutor;
-    this.flags = flags;
   }
 
   // TODO(b/64764648): Combine this with MobileDataDownloadManager.createGroupKey
@@ -112,32 +124,36 @@ public class StorageLogger {
   }
 
   public ListenableFuture<Void> logStorageStats(int daysSinceLastLog) {
-    // If the log is going to be sampled, don't bother going through the calculations.
-    int sampleInterval = flags.storageStatsLoggingSampleInterval();
-    if (!LogUtil.shouldSampleInterval(sampleInterval)) {
-      return Futures.immediateFuture(null);
-    }
-    return Futures.transformAsync(
-        fileGroupsMetadata.getAllFreshGroups(),
-        allGroups ->
-            Futures.transformAsync(
-                fileGroupsMetadata.getAllStaleGroups(),
-                staleGroups ->
-                    logStorageStatsInternal(
-                        allGroups, staleGroups, sampleInterval, daysSinceLastLog),
-                sequentialControlExecutor),
-        sequentialControlExecutor);
+    return eventLogger.logMddStorageStats(() -> buildStorageStatsIcingLogData(daysSinceLastLog));
   }
 
-  private ListenableFuture<Void> logStorageStatsInternal(
-      List<Pair<GroupKey, DataFileGroupInternal>> allGroups,
+  private ListenableFuture<Void> buildStorageStatsIcingLogData(int daysSinceLastLog) {
+    return PropagatedFluentFuture.from(fileGroupsMetadata.getAllFreshGroups())
+        .transformAsync(
+            allGroups ->
+                PropagatedFutures.transformAsync(
+                    fileGroupsMetadata.getAllStaleGroups(),
+                    staleGroups ->
+                        buildStorageStatsInternal(allGroups, staleGroups, daysSinceLastLog),
+                    sequentialControlExecutor),
+            sequentialControlExecutor);
+  }
+
+  private ListenableFuture<Void> buildStorageStatsInternal(
+      List<Pair<GroupKey, DataFileGroupInternal>> allKeysAndGroupPairs,
       List<DataFileGroupInternal> staleGroups,
-      int sampleInterval,
       int daysSinceLastLog) {
+
+    List<GroupKeyAndDataFileGroupInternal> allKeysAndGroups = new ArrayList<>();
+    for (Pair<GroupKey, DataFileGroupInternal> groupKeyAndGroup : allKeysAndGroupPairs) {
+      allKeysAndGroups.add(
+          GroupKeyAndDataFileGroupInternal.create(groupKeyAndGroup.first, groupKeyAndGroup.second));
+    }
+
     // Adding staleGroups to allGroups.
     for (DataFileGroupInternal fileGroup : staleGroups) {
-      GroupKey groupKey = createGroupKey(fileGroup);
-      allGroups.add(Pair.create(groupKey, fileGroup));
+      allKeysAndGroups.add(
+          GroupKeyAndDataFileGroupInternal.create(createGroupKey(fileGroup), fileGroup));
     }
 
     Map<String, GroupStorage> groupKeyToGroupStorage = new HashMap<>();
@@ -152,29 +168,37 @@ public class StorageLogger {
     AtomicLong totalMddBytesUsed = new AtomicLong(0L);
 
     List<ListenableFuture<Void>> futures = new ArrayList<>();
-    for (Pair<GroupKey, DataFileGroupInternal> pair : allGroups) {
-      GroupKey groupKey = pair.first;
-      DataFileGroupInternal fileGroup = pair.second;
+    for (GroupKeyAndDataFileGroupInternal groupKeyAndGroup : allKeysAndGroups) {
 
       Set<NewFileKey> fileKeys =
-          safeGetFileKeys(groupKeyToFileKeys, getGroupWithOwnerPackageKey(groupKey));
+          safeGetFileKeys(
+              groupKeyToFileKeys, getGroupWithOwnerPackageKey(groupKeyAndGroup.groupKey()));
 
       GroupStorage groupStorage =
-          safeGetGroupStorage(groupKeyToGroupStorage, getGroupWithOwnerPackageKey(groupKey));
+          safeGetGroupStorage(
+              groupKeyToGroupStorage, getGroupWithOwnerPackageKey(groupKeyAndGroup.groupKey()));
 
       Set<NewFileKey> downloadedFileKeysInit = null;
 
-      if (groupKey.getDownloaded()) {
+      if (groupKeyAndGroup.groupKey().getDownloaded()) {
         downloadedFileKeysInit =
-            safeGetFileKeys(downloadedGroupKeyToFileKeys, getGroupWithOwnerPackageKey(groupKey));
-        downloadedGroupKeyToDataFileGroup.put(getGroupWithOwnerPackageKey(groupKey), fileGroup);
+            safeGetFileKeys(
+                downloadedGroupKeyToFileKeys,
+                getGroupWithOwnerPackageKey(groupKeyAndGroup.groupKey()));
+        downloadedGroupKeyToDataFileGroup.put(
+            getGroupWithOwnerPackageKey(groupKeyAndGroup.groupKey()),
+            groupKeyAndGroup.dataFileGroupInternal());
       }
 
       // Variables captured by lambdas must be effectively final.
       Set<NewFileKey> downloadedFileKeys = downloadedFileKeysInit;
-      for (DataFile dataFile : fileGroup.getFileList()) {
+      int totalFileCount = groupKeyAndGroup.dataFileGroupInternal().getFileCount();
+      for (DataFile dataFile : groupKeyAndGroup.dataFileGroupInternal().getFileList()) {
+        boolean isInlineFile = FileGroupUtil.isInlineFile(dataFile);
+
         NewFileKey fileKey =
-            SharedFilesMetadata.createKeyFromDataFile(dataFile, fileGroup.getAllowedReadersEnum());
+            SharedFilesMetadata.createKeyFromDataFile(
+                dataFile, groupKeyAndGroup.dataFileGroupInternal().getAllowedReadersEnum());
         futures.add(
             Futures.transform(
                 computeFileSize(fileKey),
@@ -186,16 +210,25 @@ public class StorageLogger {
 
                   // Check if we have processed this fileKey before.
                   if (!fileKeys.contains(fileKey)) {
+                    if (isInlineFile) {
+                      groupStorage.totalInlineBytesUsed += fileSize;
+                    }
+
                     groupStorage.totalBytesUsed += fileSize;
                     fileKeys.add(fileKey);
                   }
 
-                  if (groupKey.getDownloaded()) {
+                  if (groupKeyAndGroup.groupKey().getDownloaded()) {
                     // Note: Nullness checker is not smart enough to figure out that
                     // downloadedFileKeys is never null.
                     Preconditions.checkNotNull(downloadedFileKeys);
                     // Check if we have processed this fileKey before.
                     if (!downloadedFileKeys.contains(fileKey)) {
+                      if (isInlineFile) {
+                        groupStorage.downloadedGroupInlineBytesUsed += fileSize;
+                        groupStorage.totalInlineFileCount += 1;
+                      }
+
                       groupStorage.downloadedGroupBytesUsed += fileSize;
                       downloadedFileKeys.add(fileKey);
                     }
@@ -204,14 +237,14 @@ public class StorageLogger {
                 },
                 sequentialControlExecutor));
       }
+      groupStorage.totalFileCount = totalFileCount;
     }
 
     return Futures.whenAllComplete(futures)
         .call(
             () -> {
               Void storageStatsBuilder = null;
-              eventLogger.logMddStorageStatsAfterSample(storageStatsBuilder, sampleInterval);
-              return null;
+              return storageStatsBuilder;
             },
             sequentialControlExecutor);
   }
@@ -247,9 +280,7 @@ public class StorageLogger {
     return FluentFuture.from(sharedFileManager.getOnDeviceUri(newFileKey))
         .catchingAsync(
             SharedFileMissingException.class,
-            e -> {
-              return Futures.immediateFuture(null);
-            },
+            e -> Futures.immediateFuture(null),
             sequentialControlExecutor)
         .transform(
             fileUri -> {
@@ -263,5 +294,18 @@ public class StorageLogger {
               return 0L;
             },
             sequentialControlExecutor);
+  }
+
+  @AutoValue
+  abstract static class GroupKeyAndDataFileGroupInternal {
+    static GroupKeyAndDataFileGroupInternal create(
+        GroupKey groupKey, DataFileGroupInternal dataFileGroupInternal) {
+      return new AutoValue_StorageLogger_GroupKeyAndDataFileGroupInternal(
+          groupKey, dataFileGroupInternal);
+    }
+
+    abstract GroupKey groupKey();
+
+    abstract DataFileGroupInternal dataFileGroupInternal();
   }
 }

@@ -15,19 +15,17 @@
  */
 package com.google.android.libraries.mobiledatadownload.populator;
 
-import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
-import static com.google.common.util.concurrent.Futures.immediateFuture;
-import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
-
 import android.content.Context;
 import android.content.SharedPreferences;
+import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedPreferencesUtil;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 import com.google.common.util.concurrent.ListenableFuture;
 import java.io.IOException;
 import java.util.concurrent.Executor;
-import mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
 
 /** ManifestFileMetadataStore based on SharedPreferences. */
 public final class SharedPreferencesManifestFileMetadata implements ManifestFileMetadataStore {
@@ -36,36 +34,43 @@ public final class SharedPreferencesManifestFileMetadata implements ManifestFile
 
   private final Object lock = new Object();
 
-  private final SharedPreferences sharedPrefs;
+  private final Supplier<SharedPreferences> sharedPrefs;
   private final Executor backgroundExecutor;
 
+  /**
+   * @param sharedPrefs may be called multiple times, so memoization is recommended
+   */
   public static SharedPreferencesManifestFileMetadata create(
-      SharedPreferences sharedPrefs, Executor backgroundExecutor) {
+      Supplier<SharedPreferences> sharedPrefs, Executor backgroundExecutor) {
     return new SharedPreferencesManifestFileMetadata(sharedPrefs, backgroundExecutor);
   }
 
   public static SharedPreferencesManifestFileMetadata createFromContext(
       Context context, Optional<String> instanceIdOptional, Executor backgroundExecutor) {
-    SharedPreferences sharedPrefs =
-        SharedPreferencesUtil.getSharedPreferences(context, SHARED_PREFS_NAME, instanceIdOptional);
+    // Avoid calling getSharedPreferences on the main thread.
+    Supplier<SharedPreferences> sharedPrefs =
+        Suppliers.memoize(
+            () ->
+                SharedPreferencesUtil.getSharedPreferences(
+                    context, SHARED_PREFS_NAME, instanceIdOptional));
     return new SharedPreferencesManifestFileMetadata(sharedPrefs, backgroundExecutor);
   }
 
   private SharedPreferencesManifestFileMetadata(
-      SharedPreferences sharedPrefs, Executor backgroundExecutor) {
+      Supplier<SharedPreferences> sharedPrefs, Executor backgroundExecutor) {
     this.sharedPrefs = sharedPrefs;
     this.backgroundExecutor = backgroundExecutor;
   }
 
   @Override
   public ListenableFuture<Optional<ManifestFileBookkeeping>> read(String manifestId) {
-    return PropagatedFutures.submitAsync(
+    return PropagatedFutures.submit(
         () -> {
           synchronized (lock) {
             ManifestFileBookkeeping proto =
                 SharedPreferencesUtil.readProto(
-                    sharedPrefs, manifestId, ManifestFileBookkeeping.parser());
-            return immediateFuture(Optional.fromNullable(proto));
+                    sharedPrefs.get(), manifestId, ManifestFileBookkeeping.parser());
+            return Optional.fromNullable(proto);
           }
         },
         backgroundExecutor);
@@ -73,15 +78,15 @@ public final class SharedPreferencesManifestFileMetadata implements ManifestFile
 
   @Override
   public ListenableFuture<Void> upsert(String manifestId, ManifestFileBookkeeping value) {
-    return PropagatedFutures.submitAsync(
+    return PropagatedFutures.submit(
         () -> {
           synchronized (lock) {
-            SharedPreferences.Editor editor = sharedPrefs.edit();
+            SharedPreferences.Editor editor = sharedPrefs.get().edit();
             SharedPreferencesUtil.writeProto(editor, manifestId, value);
             if (!editor.commit()) {
-              return immediateFailedFuture(new IOException("Failed to commit"));
+              throw new IOException("Failed to commit");
             }
-            return immediateVoidFuture();
+            return null; // for Callable
           }
         },
         backgroundExecutor);

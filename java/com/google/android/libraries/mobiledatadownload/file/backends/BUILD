@@ -176,23 +176,6 @@ android_library(
 )
 
 android_library(
-    name = "android_wipeout",
-    srcs = [
-        "AndroidUriWipeout.java",
-    ],
-    deps = [
-        ":account_serialization",
-        ":android",
-        ":android_adapter",  # Only used for URI validation
-        "//java/com/google/android/libraries/mobiledatadownload/file",
-        "//java/com/google/android/libraries/mobiledatadownload/file/common",
-        "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:exceptions",
-        "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:preconditions",
-        "//java/com/google/android/libraries/mobiledatadownload/file/openers:recursive_delete",
-    ],
-)
-
-android_library(
     name = "generic_adapter",
     srcs = [
         "GenericUriAdapter.java",

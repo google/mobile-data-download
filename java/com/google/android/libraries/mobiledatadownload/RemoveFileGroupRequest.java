@@ -30,6 +30,8 @@ public abstract class RemoveFileGroupRequest {
 
   public abstract Optional<Account> accountOptional();
 
+  public abstract Optional<String> variantIdOptional();
+
   public abstract boolean pendingOnly();
 
   public static Builder newBuilder() {
@@ -46,6 +48,20 @@ public abstract class RemoveFileGroupRequest {
 
     /** Sets the account that is associated to the file group, which is optional. */
     public abstract Builder setAccountOptional(Optional<Account> accountOptional);
+
+    /**
+     * Sets the variant id that is associated to the file group.
+     *
+     * <p>This parameter is only required to remove a group that was added to MDD with a variantId
+     * specified (see {@link AddFileGroupRequest.Builder#setVariantIdOptional}).
+     *
+     * <p>If a variantId was specified when adding the group to MDD and is not included here, the
+     * request will result in a no-op.
+     *
+     * <p>Similarly, if a variantId was <em>not</em> specified when adding the group to MDD and
+     * <em>is</em> included here, the request will also result in a no-op.
+     */
+    public abstract Builder setVariantIdOptional(Optional<String> variantIdOptional);
 
     /**
      * When true, only remove the pending version of the file group, leaving the active downloaded

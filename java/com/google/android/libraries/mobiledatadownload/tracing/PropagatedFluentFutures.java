@@ -28,7 +28,9 @@ public final class PropagatedFluentFutures {
 
   private PropagatedFluentFutures() {}
 
-  /** @see Futures#allAsList(ListenableFuture[]) */
+  /**
+   * @see Futures#allAsList(ListenableFuture[])
+   */
   public static <T extends @Nullable Object> PropagatedFluentFuture<List<T>> allAsList(
       ListenableFuture<? extends T>... futures) {
     return PropagatedFluentFuture.from(Futures.allAsList(futures));

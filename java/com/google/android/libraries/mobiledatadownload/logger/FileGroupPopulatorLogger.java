@@ -38,7 +38,6 @@ public final class FileGroupPopulatorLogger {
       return;
     }
     Void logData = null;
-    logger.log(null, 0);
   }
 
   /** Logs the refresh result of {@code GellerFileGroupPopulator}. */
@@ -49,6 +48,5 @@ public final class FileGroupPopulatorLogger {
       return;
     }
     Void logData = null;
-    logger.log(null, 0);
   }
 }

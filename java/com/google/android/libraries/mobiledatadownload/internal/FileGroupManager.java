@@ -16,8 +16,9 @@
 package com.google.android.libraries.mobiledatadownload.internal;
 
 import static com.google.android.libraries.mobiledatadownload.tracing.TracePropagation.propagateAsyncFunction;
-import static com.google.android.libraries.mobiledatadownload.tracing.TracePropagation.propagateFunction;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static java.lang.Math.max;
 
@@ -43,6 +44,8 @@ import com.google.android.libraries.mobiledatadownload.account.AccountUtil;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
+import com.google.android.libraries.mobiledatadownload.internal.logging.DownloadStateLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.AndroidSharingUtil;
@@ -53,14 +56,15 @@ import com.google.android.libraries.mobiledatadownload.internal.util.SymlinkUtil
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.auto.value.AutoValue;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.FluentFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -127,6 +131,7 @@ public class FileGroupManager {
   private final Optional<AccountSource> accountSourceOptional;
   private final Executor sequentialControlExecutor;
   private final Optional<String> instanceId;
+  private final DownloadStageManager downloadStageManager;
   private final Flags flags;
 
   @Inject
@@ -141,6 +146,7 @@ public class FileGroupManager {
       @SequentialControlExecutor Executor sequentialControlExecutor,
       @InstanceId Optional<String> instanceId,
       SynchronousFileStorage fileStorage,
+      DownloadStageManager downloadStageManager,
       Flags flags) {
     this.context = context;
     this.eventLogger = eventLogger;
@@ -152,6 +158,7 @@ public class FileGroupManager {
     this.sequentialControlExecutor = sequentialControlExecutor;
     this.instanceId = instanceId;
     this.fileStorage = fileStorage;
+    this.downloadStageManager = downloadStageManager;
     this.flags = flags;
   }
 
@@ -184,13 +191,13 @@ public class FileGroupManager {
       throw new UninstalledAppException();
     }
 
-    ListenableFuture<Boolean> resultFuture = Futures.immediateFuture(null);
+    ListenableFuture<Boolean> resultFuture = immediateFuture(null);
     if (flags.enableDelayedDownload()
         && receivedGroup.getDownloadConditions().getActivatingCondition()
             == ActivatingCondition.DEVICE_ACTIVATED) {
 
       resultFuture =
-          PropagatedFutures.transformAsync(
+          transformSequentialAsync(
               fileGroupsMetadata.readGroupKeyProperties(groupKey),
               groupKeyProperties -> {
                 // It shouldn't make a difference if we found an existing value or not.
@@ -207,57 +214,49 @@ public class FileGroupManager {
 
                   throw new ActivationRequiredForGroupException();
                 }
-                return Futures.immediateFuture(null);
-              },
-              sequentialControlExecutor);
+                return immediateFuture(null);
+              });
     }
 
-    resultFuture =
-        PropagatedFluentFuture.from(resultFuture)
-            .transformAsync(
-                voidArg -> isAddedGroupDuplicate(groupKey, receivedGroup),
-                sequentialControlExecutor)
-            .transformAsync(
-                isDuplicate -> {
-                  if (isDuplicate) {
+    return PropagatedFluentFuture.from(resultFuture)
+        .transformAsync(
+            voidArg -> isAddedGroupDuplicate(groupKey, receivedGroup), sequentialControlExecutor)
+        .transformAsync(
+            isDuplicate -> {
+              if (isDuplicate) {
+                LogUtil.d(
+                    "%s: Received duplicate config for group: %s", TAG, groupKey.getGroupName());
+                return immediateFuture(false);
+              }
+              return transformSequentialAsync(
+                  maybeSetGroupNewFilesReceivedTimestamp(groupKey, receivedGroup),
+                  receivedGroupCopy -> {
                     LogUtil.d(
-                        "%s: Received duplicate config for group: %s",
-                        TAG, groupKey.getGroupName());
-                    return Futures.immediateFuture(false);
-                  }
-                  return PropagatedFutures.transformAsync(
-                      maybeSetGroupNewFilesReceivedTimestamp(groupKey, receivedGroup),
-                      receivedGroupCopy -> {
-                        LogUtil.d(
-                            "%s: Received new config for group: %s", TAG, groupKey.getGroupName());
+                        "%s: Received new config for group: %s", TAG, groupKey.getGroupName());
 
-                        logEventWithDataFileGroup(0, eventLogger, receivedGroupCopy);
+                    logEventWithDataFileGroup(0, eventLogger, receivedGroupCopy);
 
-                        return PropagatedFutures.transformAsync(
-                            subscribeGroup(receivedGroupCopy),
-                            subscribed -> {
-                              if (!subscribed) {
-                                throw new IOException("Subscribing to group failed");
-                              }
+                    return transformSequentialAsync(
+                        subscribeGroup(receivedGroupCopy),
+                        subscribed -> {
+                          if (!subscribed) {
+                            throw new IOException("Subscribing to group failed");
+                          }
 
-                              // TODO(b/160164032): if the File Group has new SyncId, clear the old
-                              // sync.
-                              // TODO(b/160164032): triggerSync in daily maintenance for not
-                              // completed groups.
-                              // Write to Metadata then schedule task via SPE.
-                              return PropagatedFutures.transformAsync(
-                                  writeUpdatedGroupToMetadata(groupKey, receivedGroupCopy),
-                                  (voidArg) -> {
-                                    return Futures.immediateFuture(true);
-                                  },
-                                  sequentialControlExecutor);
-                            },
-                            sequentialControlExecutor);
-                      },
-                      sequentialControlExecutor);
-                },
-                sequentialControlExecutor);
-    return resultFuture;
+                          // TODO(b/160164032): if the File Group has new SyncId, clear the old
+                          // sync.
+                          // TODO(b/160164032): triggerSync in daily maintenance for not
+                          // completed groups.
+                          // Write to Metadata then schedule task via SPE.
+                          return transformSequentialAsync(
+                              writeUpdatedGroupToMetadata(groupKey, receivedGroupCopy),
+                              (voidArg) -> {
+                                return immediateFuture(true);
+                              });
+                        });
+                  });
+            },
+            sequentialControlExecutor);
   }
 
   private ListenableFuture<Void> writeUpdatedGroupToMetadata(
@@ -266,17 +265,41 @@ public class FileGroupManager {
     // pending group already present, it will be overwritten and any
     // files will be garbage collected later.
     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
-    return Futures.transformAsync(
-        fileGroupsMetadata.write(pendingGroupKey, receivedGroupCopy),
-        writeSuccess -> {
-          if (!writeSuccess) {
-            eventLogger.logEventSampled(0);
-            return Futures.immediateFailedFuture(
-                new IOException("Failed to commit new group metadata to disk."));
-          }
-          return Futures.immediateVoidFuture();
-        },
-        sequentialControlExecutor);
+
+    ListenableFuture<@NullableType DataFileGroupInternal> toBeOverwrittenPendingGroupFuture =
+        fileGroupsMetadata.read(pendingGroupKey);
+
+    return PropagatedFluentFuture.from(toBeOverwrittenPendingGroupFuture)
+        .transformAsync(
+            nullVoid -> fileGroupsMetadata.write(pendingGroupKey, receivedGroupCopy),
+            sequentialControlExecutor)
+        .transformAsync(
+            writeSuccess -> {
+              if (!writeSuccess) {
+                eventLogger.logEventSampled(0);
+                return immediateFailedFuture(
+                    new IOException("Failed to commit new group metadata to disk."));
+              }
+              return immediateVoidFuture();
+            },
+            sequentialControlExecutor)
+        .transformAsync(
+            nullVoid -> downloadStageManager.updateExperimentIds(receivedGroupCopy.getGroupName()),
+            sequentialControlExecutor)
+        .transformAsync(
+            nullVoid -> {
+              // We need to make sure to clear the experiment ids for this group here, since it will
+              // be overwritten afterwards.
+              DataFileGroupInternal toBeOverwrittenPendingGroup =
+                  Futures.getDone(toBeOverwrittenPendingGroupFuture);
+              if (toBeOverwrittenPendingGroup != null) {
+                return downloadStageManager.clearExperimentIdsForBuildsIfNoneActive(
+                    ImmutableList.of(toBeOverwrittenPendingGroup));
+              }
+
+              return immediateVoidFuture();
+            },
+            sequentialControlExecutor);
   }
 
   /**
@@ -293,7 +316,7 @@ public class FileGroupManager {
       throws SharedFileMissingException, IOException {
     // Remove the pending version from metadata.
     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.read(pendingGroupKey),
         pendingFileGroup -> {
           ListenableFuture<Void> removePendingGroupFuture = immediateVoidFuture();
@@ -301,10 +324,10 @@ public class FileGroupManager {
             // Clear Sync Reason before removing the file group.
             ListenableFuture<Void> clearSyncReasonFuture = immediateVoidFuture();
             removePendingGroupFuture =
-                Futures.transformAsync(
+                transformSequentialAsync(
                     clearSyncReasonFuture,
                     voidArg ->
-                        Futures.transformAsync(
+                        transformSequentialAsync(
                             fileGroupsMetadata.remove(pendingGroupKey),
                             removeSuccess -> {
                               if (!removeSuccess) {
@@ -313,28 +336,27 @@ public class FileGroupManager {
                                         + " account: '%s'",
                                     TAG, groupKey.getGroupName(), groupKey.getAccount());
                                 eventLogger.logEventSampled(0);
-                                return Futures.immediateFailedFuture(
+                                return immediateFailedFuture(
                                     new IOException(
                                         "Failed to remove pending group: "
                                             + groupKey.getGroupName()));
                               }
-                              return immediateVoidFuture();
-                            },
-                            sequentialControlExecutor),
-                    sequentialControlExecutor);
+                              return downloadStageManager.clearExperimentIdsForBuildsIfNoneActive(
+                                  ImmutableList.of(pendingFileGroup));
+                            }));
           }
-          return Futures.transformAsync(
+          return transformSequentialAsync(
               removePendingGroupFuture,
               voidArg0 -> {
                 GroupKey downloadedGroupKey = groupKey.toBuilder().setDownloaded(true).build();
-                return Futures.transformAsync(
+                return transformSequentialAsync(
                     fileGroupsMetadata.read(downloadedGroupKey),
                     downloadedFileGroup -> {
                       ListenableFuture<Void> removeDownloadedGroupFuture = immediateVoidFuture();
                       if (downloadedFileGroup != null && !pendingOnly) {
                         // Remove the downloaded version from metadata.
                         removeDownloadedGroupFuture =
-                            Futures.transformAsync(
+                            transformSequentialAsync(
                                 fileGroupsMetadata.remove(downloadedGroupKey),
                                 removeSuccess -> {
                                   if (!removeSuccess) {
@@ -343,13 +365,13 @@ public class FileGroupManager {
                                             + " '%s'; account: '%s'",
                                         TAG, groupKey.getGroupName(), groupKey.getAccount());
                                     eventLogger.logEventSampled(0);
-                                    return Futures.immediateFailedFuture(
+                                    return immediateFailedFuture(
                                         new IOException(
                                             "Failed to remove downloaded group: "
                                                 + groupKey.getGroupName()));
                                   }
                                   // Add the downloaded version to stale.
-                                  return Futures.transformAsync(
+                                  return transformSequentialAsync(
                                       fileGroupsMetadata.addStaleGroup(downloadedFileGroup),
                                       addSuccess -> {
                                         if (!addSuccess) {
@@ -358,26 +380,25 @@ public class FileGroupManager {
                                                   + " account: '%s'",
                                               TAG, groupKey.getGroupName(), groupKey.getAccount());
                                           eventLogger.logEventSampled(0);
-                                          return Futures.immediateFailedFuture(
+                                          return immediateFailedFuture(
                                               new IOException(
                                                   "Failed to add downloaded group to stale: "
                                                       + groupKey.getGroupName()));
                                         }
-                                        return immediateVoidFuture();
-                                      },
-                                      sequentialControlExecutor);
-                                },
-                                sequentialControlExecutor);
+                                        return downloadStageManager.updateExperimentIds(
+                                            downloadedFileGroup.getGroupName());
+                                      });
+                                });
                       }
 
-                      return Futures.transformAsync(
+                      return transformSequentialAsync(
                           removeDownloadedGroupFuture,
                           voidArg1 -> {
                             // Cancel any ongoing download of the data files in the file group, if
                             // the data file
                             // is not referenced by any fresh group.
                             if (pendingFileGroup != null) {
-                              return Futures.transformAsync(
+                              return transformSequentialAsync(
                                   getFileKeysReferencedByFreshGroups(),
                                   referencedFileKeys -> {
                                     List<ListenableFuture<Void>> cancelDownloadsFutures =
@@ -399,20 +420,15 @@ public class FileGroupManager {
                                             sharedFileManager.cancelDownload(newFileKey));
                                       }
                                     }
-                                    return Futures.whenAllComplete(cancelDownloadsFutures)
+                                    return PropagatedFutures.whenAllComplete(cancelDownloadsFutures)
                                         .call(() -> null, sequentialControlExecutor);
-                                  },
-                                  sequentialControlExecutor);
+                                  });
                             }
                             return immediateVoidFuture();
-                          },
-                          sequentialControlExecutor);
-                    },
-                    sequentialControlExecutor);
-              },
-              sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+                          });
+                    });
+              });
+        });
   }
 
   /**
@@ -435,8 +451,10 @@ public class FileGroupManager {
    */
   ListenableFuture<Void> removeFileGroups(List<GroupKey> groupKeys) {
     // Track Pending and Downloaded Group Keys to remove
-    List<GroupKey> pendingGroupKeysToRemove = new ArrayList<>(groupKeys.size());
-    List<GroupKey> downloadedGroupKeysToRemove = new ArrayList<>(groupKeys.size());
+    Map<GroupKey, DataFileGroupInternal> pendingGroupsToRemove =
+        Maps.newHashMapWithExpectedSize(groupKeys.size());
+    Map<GroupKey, DataFileGroupInternal> downloadedGroupsToRemove =
+        Maps.newHashMapWithExpectedSize(groupKeys.size());
 
     // Track Pending File Keys that should be canceled
     Set<NewFileKey> pendingFileKeysToCancel = new HashSet<>();
@@ -444,8 +462,8 @@ public class FileGroupManager {
     // Track Downloaded File Groups that should be moved to Stale
     List<DataFileGroupInternal> fileGroupsToAddAsStale = new ArrayList<>(groupKeys.size());
 
-    return FluentFuture.from(
-            Futures.submitAsync(
+    return PropagatedFluentFuture.from(
+            PropagatedFutures.submitAsync(
                 () -> {
                   // First, Clear SPE Sync Reasons (if applicable) and remove pending file group
                   // metadata.
@@ -455,16 +473,16 @@ public class FileGroupManager {
                     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
 
                     clearSpeSyncReasonFutures.add(
-                        FluentFuture.from(fileGroupsMetadata.read(pendingGroupKey))
+                        PropagatedFluentFuture.from(fileGroupsMetadata.read(pendingGroupKey))
                             .transformAsync(
                                 pendingFileGroup -> {
                                   if (pendingFileGroup == null) {
                                     // no pending group found, return early
-                                    return Futures.immediateVoidFuture();
+                                    return immediateVoidFuture();
                                   }
 
                                   // Pending group exists, add it to remove list
-                                  pendingGroupKeysToRemove.add(pendingGroupKey);
+                                  pendingGroupsToRemove.put(pendingGroupKey, pendingFileGroup);
 
                                   // Add all pending file keys to cancel
                                   for (DataFile dataFile : pendingFileGroup.getFileList()) {
@@ -479,30 +497,31 @@ public class FileGroupManager {
                                 sequentialControlExecutor));
                   }
 
-                  return Futures.whenAllComplete(clearSpeSyncReasonFutures)
+                  return PropagatedFutures.whenAllComplete(clearSpeSyncReasonFutures)
                       .callAsync(
                           () -> {
                             // Throw aggregate exception if any reasons failed.
                             AggregateException.throwIfFailed(
                                 clearSpeSyncReasonFutures, "Unable to clear SPE Sync Reasons");
-                            return Futures.transformAsync(
+                            return transformSequentialAsync(
                                 fileGroupsMetadata.removeAllGroupsWithKeys(
-                                    pendingGroupKeysToRemove),
+                                    ImmutableList.copyOf(pendingGroupsToRemove.keySet())),
                                 removePendingGroupsResult -> {
                                   if (!removePendingGroupsResult.booleanValue()) {
                                     LogUtil.e(
                                         "%s: Failed to remove %d pending versions of %d requested"
                                             + " groups",
-                                        TAG, pendingGroupKeysToRemove.size(), groupKeys.size());
+                                        TAG, pendingGroupsToRemove.size(), groupKeys.size());
                                     eventLogger.logEventSampled(0);
-                                    return Futures.immediateFailedFuture(
+                                    return immediateFailedFuture(
                                         new IOException(
                                             "Failed to remove pending group keys, count = "
                                                 + groupKeys.size()));
                                   }
-                                  return Futures.immediateVoidFuture();
-                                },
-                                sequentialControlExecutor);
+                                  return downloadStageManager
+                                      .clearExperimentIdsForBuildsIfNoneActive(
+                                          pendingGroupsToRemove.values());
+                                });
                           },
                           sequentialControlExecutor);
                 },
@@ -516,45 +535,45 @@ public class FileGroupManager {
                 GroupKey downloadedGroupKey = groupKey.toBuilder().setDownloaded(true).build();
 
                 readDownloadedFileGroupFutures.add(
-                    Futures.transformAsync(
+                    transformSequentialAsync(
                         fileGroupsMetadata.read(downloadedGroupKey),
                         downloadedFileGroup -> {
                           if (downloadedFileGroup != null) {
                             // Downloaded group exists, add to remove list
-                            downloadedGroupKeysToRemove.add(downloadedGroupKey);
+                            downloadedGroupsToRemove.put(downloadedGroupKey, downloadedFileGroup);
 
                             // Store downloaded group so it can be moved to stale when all metadata
                             // is updated.
                             fileGroupsToAddAsStale.add(downloadedFileGroup);
                           }
-                          return Futures.immediateVoidFuture();
-                        },
-                        sequentialControlExecutor));
+                          return immediateVoidFuture();
+                        }));
               }
 
-              return Futures.whenAllComplete(readDownloadedFileGroupFutures)
+              return PropagatedFutures.whenAllComplete(readDownloadedFileGroupFutures)
                   .callAsync(
                       () -> {
                         AggregateException.throwIfFailed(
                             readDownloadedFileGroupFutures,
                             "Unable to read downloaded file groups to remove");
-                        return Futures.transformAsync(
-                            fileGroupsMetadata.removeAllGroupsWithKeys(downloadedGroupKeysToRemove),
+                        return transformSequentialAsync(
+                            fileGroupsMetadata.removeAllGroupsWithKeys(
+                                ImmutableList.copyOf(downloadedGroupsToRemove.keySet())),
                             removeDownloadedGroupsResult -> {
                               if (!removeDownloadedGroupsResult.booleanValue()) {
                                 LogUtil.e(
                                     "%s: Failed to remove %d downloaded versions of %d requested"
                                         + " groups",
-                                    TAG, downloadedGroupKeysToRemove.size(), groupKeys.size());
+                                    TAG, downloadedGroupsToRemove.size(), groupKeys.size());
                                 eventLogger.logEventSampled(0);
-                                return Futures.immediateFailedFuture(
+                                return immediateFailedFuture(
                                     new IOException(
                                         "Failed to remove downloaded groups, count = "
-                                            + downloadedGroupKeysToRemove.size()));
+                                            + downloadedGroupsToRemove.size()));
                               }
-                              return Futures.immediateVoidFuture();
-                            },
-                            sequentialControlExecutor);
+                              return downloadStageManager.clearExperimentIdsForBuildsIfNoneActive(
+                                  downloadedGroupsToRemove.values());
+                            });
                       },
                       sequentialControlExecutor);
             },
@@ -564,15 +583,15 @@ public class FileGroupManager {
               // Third, move any removed file groups from downloaded to stale.
               // This prevents a files in the group from being removed before its
               // stale_lifetime_secs has expired.
-              if (downloadedGroupKeysToRemove.isEmpty()) {
+              if (downloadedGroupsToRemove.isEmpty()) {
                 // No downloaded groups were removed, return early
-                return Futures.immediateVoidFuture();
+                return immediateVoidFuture();
               }
 
               List<ListenableFuture<Void>> addStaleGroupFutures = new ArrayList<>();
               for (DataFileGroupInternal staleGroup : fileGroupsToAddAsStale) {
                 addStaleGroupFutures.add(
-                    Futures.transformAsync(
+                    transformSequentialAsync(
                         fileGroupsMetadata.addStaleGroup(staleGroup),
                         addStaleGroupResult -> {
                           if (!addStaleGroupResult.booleanValue()) {
@@ -580,16 +599,15 @@ public class FileGroupManager {
                                 "%s: Failed to add to stale for group: '%s';",
                                 TAG, staleGroup.getGroupName());
                             eventLogger.logEventSampled(0);
-                            return Futures.immediateFailedFuture(
+                            return immediateFailedFuture(
                                 new IOException(
                                     "Failed to add downloaded group to stale: "
                                         + staleGroup.getGroupName()));
                           }
-                          return Futures.immediateVoidFuture();
-                        },
-                        sequentialControlExecutor));
+                          return immediateVoidFuture();
+                        }));
               }
-              return Futures.whenAllComplete(addStaleGroupFutures)
+              return PropagatedFutures.whenAllComplete(addStaleGroupFutures)
                   .call(
                       () -> {
                         AggregateException.throwIfFailed(
@@ -606,12 +624,12 @@ public class FileGroupManager {
               // A file that was referenced by a removed file group may still be referenced by an
               // existing pending group and should not be cancelled. Only cancel pending downloads
               // that are no longer referenced by any active/pending file groups.
-              if (pendingGroupKeysToRemove.isEmpty()) {
+              if (pendingGroupsToRemove.isEmpty()) {
                 // No pending groups were removed, return early
-                return Futures.immediateVoidFuture();
+                return immediateVoidFuture();
               }
 
-              return Futures.transformAsync(
+              return transformSequentialAsync(
                   getFileKeysReferencedByFreshGroups(),
                   referencedFileKeys -> {
                     List<ListenableFuture<Void>> cancelDownloadFutures = new ArrayList<>();
@@ -621,7 +639,7 @@ public class FileGroupManager {
                         cancelDownloadFutures.add(sharedFileManager.cancelDownload(newFileKey));
                       }
                     }
-                    return Futures.whenAllComplete(cancelDownloadFutures)
+                    return PropagatedFutures.whenAllComplete(cancelDownloadFutures)
                         .call(
                             () -> {
                               AggregateException.throwIfFailed(
@@ -630,8 +648,7 @@ public class FileGroupManager {
                               return null;
                             },
                             sequentialControlExecutor);
-                  },
-                  sequentialControlExecutor);
+                  });
             },
             sequentialControlExecutor);
   }
@@ -651,17 +668,15 @@ public class FileGroupManager {
   public ListenableFuture<@NullableType DataFileGroupInternal> getFileGroup(
       GroupKey groupKey, boolean downloaded) {
     GroupKey downloadedKey = groupKey.toBuilder().setDownloaded(downloaded).build();
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.read(downloadedKey),
         dataFileGroup ->
-            Futures.transformAsync(
+            transformSequentialAsync(
                 // TODO(b/194688687): consider moving this verification to the
                 // MobileDataDownloadManager level since that is where verification happens for
                 // getDataFileUri.
                 maybeVerifyIsolatedStructure(dataFileGroup, downloaded),
-                result -> Futures.immediateFuture(result ? dataFileGroup : null),
-                sequentialControlExecutor),
-        sequentialControlExecutor);
+                result -> immediateFuture(result ? dataFileGroup : null)));
   }
 
   /**
@@ -687,7 +702,7 @@ public class FileGroupManager {
    */
   private ListenableFuture<@NullableType Pair<Boolean, DataFileGroupInternal>> getGroupPairById(
       GroupKey groupKey, long buildId, String variantId, Optional<Any> customPropertyOptional) {
-    return Futures.transform(
+    return transformSequential(
         fileGroupsMetadata.getAllFreshGroups(),
         freshGroupPairList -> {
           for (Pair<GroupKey, DataFileGroupInternal> freshGroupPair : freshGroupPairList) {
@@ -719,8 +734,7 @@ public class FileGroupManager {
 
           // No compatible group found, return null;
           return null;
-        },
-        sequentialControlExecutor);
+        });
   }
 
   /**
@@ -731,7 +745,7 @@ public class FileGroupManager {
    * @return future resolving to whether the activation was successful.
    */
   public ListenableFuture<Boolean> setGroupActivation(GroupKey groupKey, boolean activation) {
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.readGroupKeyProperties(groupKey),
         groupKeyProperties -> {
           // It shouldn't make a difference if we found an existing value or not.
@@ -756,36 +770,33 @@ public class FileGroupManager {
             removeGroupFutures.add(removeActivatedGroup(downloadedGroupKey));
           }
 
-          return Futures.whenAllComplete(removeGroupFutures)
+          return PropagatedFutures.whenAllComplete(removeGroupFutures)
               .callAsync(
                   () ->
                       fileGroupsMetadata.writeGroupKeyProperties(
                           groupKey, groupKeyPropertiesBuilder.build()),
                   sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+        });
   }
 
   private ListenableFuture<Void> removeActivatedGroup(GroupKey groupKey) {
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.read(groupKey),
         group -> {
           if (group != null
               && group.getDownloadConditions().getActivatingCondition()
                   == ActivatingCondition.DEVICE_ACTIVATED) {
-            return Futures.transform(
+            return transformSequentialAsync(
                 fileGroupsMetadata.remove(groupKey),
                 removeSuccess -> {
                   if (!removeSuccess) {
                     eventLogger.logEventSampled(0);
                   }
-                  return null;
-                },
-                sequentialControlExecutor);
+                  return immediateVoidFuture();
+                });
           }
-          return Futures.immediateFuture(null);
-        },
-        sequentialControlExecutor);
+          return immediateVoidFuture();
+        });
   }
 
   /**
@@ -828,10 +839,11 @@ public class FileGroupManager {
       ImmutableMap<String, FileSource> inlineFileMap,
       Optional<Any> customPropertyOptional,
       AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
+    DownloadStateLogger downloadStateLogger = DownloadStateLogger.forImport(eventLogger);
 
     // Get group that should be updated for import, or return group not found failure
     ListenableFuture<Pair<Boolean, DataFileGroupInternal>> groupPairToUpdateFuture =
-        Futures.transformAsync(
+        transformSequentialAsync(
             getGroupPairById(groupKey, buildId, variantId, customPropertyOptional),
             foundGroupPair -> {
               if (foundGroupPair == null) {
@@ -840,7 +852,7 @@ public class FileGroupManager {
                     "%s: importFiles for group name: %s, buildId: %d, variantId: %s, but no group"
                         + " was found",
                     TAG, groupKey.getGroupName(), buildId, variantId);
-                return Futures.immediateFailedFuture(
+                return immediateFailedFuture(
                     DownloadException.builder()
                         .setDownloadResultCode(DownloadResultCode.GROUP_NOT_FOUND_ERROR)
                         .setMessage(
@@ -851,11 +863,10 @@ public class FileGroupManager {
               }
 
               // wrap in checkNotNull to ensure type safety.
-              return Futures.immediateFuture(checkNotNull(foundGroupPair));
-            },
-            sequentialControlExecutor);
+              return immediateFuture(checkNotNull(foundGroupPair));
+            });
 
-    return FluentFuture.from(groupPairToUpdateFuture)
+    return PropagatedFluentFuture.from(groupPairToUpdateFuture)
         .transformAsync(
             groupPairToUpdate -> {
               // Perform an in-memory merge of updatedDataFileList into the group, so we get the
@@ -863,13 +874,16 @@ public class FileGroupManager {
               DataFileGroupInternal mergedFileGroup =
                   mergeFilesIntoFileGroup(updatedDataFileList, groupPairToUpdate.second);
 
+              // Log the start of the import now that we have the group.
+              downloadStateLogger.logStarted(mergedFileGroup);
+
               // Reserve file entries in case any new DataFiles were included in the merge. This
               // will be a no-op for existing DataFiles.
-              return Futures.transformAsync(
+              return transformSequentialAsync(
                   subscribeGroup(mergedFileGroup),
                   subscribed -> {
                     if (!subscribed) {
-                      return Futures.immediateFailedFuture(
+                      return immediateFailedFuture(
                           DownloadException.builder()
                               .setDownloadResultCode(
                                   DownloadResultCode.UNABLE_TO_RESERVE_FILE_ENTRY)
@@ -878,9 +892,8 @@ public class FileGroupManager {
                                       + mergedFileGroup.getGroupName())
                               .build());
                     }
-                    return Futures.immediateFuture(mergedFileGroup);
-                  },
-                  sequentialControlExecutor);
+                    return immediateFuture(mergedFileGroup);
+                  });
             },
             sequentialControlExecutor)
         .transformAsync(
@@ -897,16 +910,17 @@ public class FileGroupManager {
               // Combine Futures using whenAllComplete so all imports are attempted, even if some
               // fail.
               ListenableFuture<GroupDownloadStatus> combinedImportFuture =
-                  Futures.whenAllComplete(allImportFutures)
+                  PropagatedFutures.whenAllComplete(allImportFutures)
                       .callAsync(
                           () ->
                               verifyGroupDownloaded(
                                   groupKey,
                                   mergedFileGroup,
                                   removePendingVersion,
-                                  customFileGroupValidator),
+                                  customFileGroupValidator,
+                                  downloadStateLogger),
                           sequentialControlExecutor);
-              return Futures.transformAsync(
+              return transformSequentialAsync(
                   combinedImportFuture,
                   groupDownloadStatus -> {
                     // If the imports failed, we should return this immediately.
@@ -921,21 +935,21 @@ public class FileGroupManager {
                       eventLogger.logMddDownloadResult(0, null);
                       // group downloaded, so it will be written in verifyGroupDownloaded, return
                       // early.
-                      return Futures.immediateVoidFuture();
+                      return immediateVoidFuture();
                     }
 
                     // Group to update is pending or failed. However, this state is not due to the
                     // import futures (which all succeeded). Therefore, we are safe to write
                     // merged file group to metadata using the original state (downloaded/pending)
                     // as before.
-                    return Futures.transformAsync(
+                    return transformSequentialAsync(
                         fileGroupsMetadata.write(
                             groupKey.toBuilder().setDownloaded(groupIsDownloaded).build(),
                             mergedFileGroup),
                         writeSuccess -> {
                           if (!writeSuccess) {
                             eventLogger.logEventSampled(0);
-                            return Futures.immediateFailedFuture(
+                            return immediateFailedFuture(
                                 DownloadException.builder()
                                     .setMessage(
                                         "File Import(s) succeeded, but failed to save MDD state.")
@@ -943,11 +957,9 @@ public class FileGroupManager {
                                         DownloadResultCode.UNABLE_TO_UPDATE_GROUP_METADATA_ERROR)
                                     .build());
                           }
-                          return Futures.immediateVoidFuture();
-                        },
-                        sequentialControlExecutor);
-                  },
-                  sequentialControlExecutor);
+                          return immediateVoidFuture();
+                        });
+                  });
             },
             sequentialControlExecutor)
         .catchingAsync(
@@ -955,17 +967,16 @@ public class FileGroupManager {
             exception -> {
               // Log DownloadException (or multiple DownloadExceptions if wrapped in
               // AggregateException) for debugging.
-              ListenableFuture<Void> resultFuture = Futures.immediateVoidFuture();
+              ListenableFuture<Void> resultFuture = immediateVoidFuture();
               if (exception instanceof DownloadException) {
                 LogUtil.d("%s: Logging DownloadException", TAG);
 
                 DownloadException downloadException = (DownloadException) exception;
                 resultFuture =
-                    Futures.transformAsync(
+                    transformSequentialAsync(
                         resultFuture,
                         voidArg ->
-                            logDownloadFailure(groupKey, downloadException, buildId, variantId),
-                        sequentialControlExecutor);
+                            logDownloadFailure(groupKey, downloadException, buildId, variantId));
               } else if (exception instanceof AggregateException) {
                 LogUtil.d("%s: Logging AggregateException", TAG);
 
@@ -978,19 +989,16 @@ public class FileGroupManager {
 
                   DownloadException downloadException = (DownloadException) throwable;
                   resultFuture =
-                      Futures.transformAsync(
+                      transformSequentialAsync(
                           resultFuture,
                           voidArg ->
-                              logDownloadFailure(groupKey, downloadException, buildId, variantId),
-                          sequentialControlExecutor);
+                              logDownloadFailure(groupKey, downloadException, buildId, variantId));
                 }
               }
 
               // Always return failure to upstream callers for further error handling.
-              return Futures.transformAsync(
-                  resultFuture,
-                  voidArg -> Futures.immediateFailedFuture(exception),
-                  sequentialControlExecutor);
+              return transformSequentialAsync(
+                  resultFuture, voidArg -> immediateFailedFuture(exception));
             },
             sequentialControlExecutor);
   }
@@ -1100,12 +1108,12 @@ public class FileGroupManager {
           SharedFilesMetadata.createKeyFromDataFile(dataFile, pendingGroup.getAllowedReadersEnum());
 
       allImportFutures.add(
-          Futures.transformAsync(
+          transformSequentialAsync(
               sharedFileManager.getFileStatus(newFileKey),
               fileStatus -> {
                 if (fileStatus.equals(FileStatus.DOWNLOAD_COMPLETE)) {
                   // file already downloaded, return immediately
-                  return Futures.immediateVoidFuture();
+                  return immediateVoidFuture();
                 }
 
                 // File needs to be downloaded, check that inline file source is available
@@ -1113,7 +1121,7 @@ public class FileGroupManager {
                   LogUtil.e(
                       "%s:Attempt to import file without inline file source. Id = %s",
                       TAG, dataFile.getFileId());
-                  return Futures.immediateFailedFuture(
+                  return immediateFailedFuture(
                       DownloadException.builder()
                           .setDownloadResultCode(DownloadResultCode.MISSING_INLINE_FILE_SOURCE)
                           .build());
@@ -1128,8 +1136,7 @@ public class FileGroupManager {
                     newFileKey,
                     pendingGroup.getDownloadConditions(),
                     checkNotNull(inlineFileMap.get(dataFile.getFileId())));
-              },
-              sequentialControlExecutor));
+              }));
     }
 
     return allImportFutures;
@@ -1156,17 +1163,17 @@ public class FileGroupManager {
         new AtomicReference<>();
 
     ListenableFuture<DataFileGroupInternal> downloadFuture =
-        Futures.transformAsync(
+        transformSequentialAsync(
             getFileGroup(groupKey, false /* downloaded */),
             pendingGroup -> {
               if (pendingGroup == null) {
                 // There is no pending group. See if there is a downloaded version and return if it
                 // exists.
-                return Futures.transformAsync(
+                return transformSequentialAsync(
                     getFileGroup(groupKey, true /* downloaded */),
                     downloadedGroup -> {
                       if (downloadedGroup == null) {
-                        return Futures.immediateFailedFuture(
+                        return immediateFailedFuture(
                             DownloadException.builder()
                                 .setDownloadResultCode(DownloadResultCode.GROUP_NOT_FOUND_ERROR)
                                 .setMessage(
@@ -1175,18 +1182,18 @@ public class FileGroupManager {
                                 .build());
                       }
                       fileGroupForLogging.set(downloadedGroup);
-                      return Futures.immediateFuture(downloadedGroup);
-                    },
-                    sequentialControlExecutor);
+                      return immediateFuture(downloadedGroup);
+                    });
               }
               fileGroupForLogging.set(pendingGroup);
 
               // Set the download started timestamp and log download started event.
-              return FluentFuture.from(updateBookkeepingOnStartDownload(groupKey, pendingGroup))
+              return PropagatedFluentFuture.from(
+                      updateBookkeepingOnStartDownload(groupKey, pendingGroup))
                   .catchingAsync(
                       IOException.class,
                       ex ->
-                          Futures.immediateFailedFuture(
+                          immediateFailedFuture(
                               DownloadException.builder()
                                   .setDownloadResultCode(
                                       DownloadResultCode.UNABLE_TO_UPDATE_GROUP_METADATA_ERROR)
@@ -1201,10 +1208,10 @@ public class FileGroupManager {
                         // Note: We use whenAllComplete instead of whenAllSucceed since we want to
                         // continue to download all other files even if one or more fail. Verify the
                         // file group.
-                        return Futures.whenAllComplete(allFileFutures)
+                        return PropagatedFutures.whenAllComplete(allFileFutures)
                             .callAsync(
                                 () ->
-                                    Futures.transformAsync(
+                                    transformSequentialAsync(
                                         verifyPendingGroupDownloaded(
                                             groupKey,
                                             updatedPendingGroup,
@@ -1214,15 +1221,13 @@ public class FileGroupManager {
                                                 allFileFutures,
                                                 groupDownloadStatus,
                                                 updatedPendingGroup,
-                                                groupKey),
-                                        sequentialControlExecutor),
+                                                groupKey)),
                                 sequentialControlExecutor);
                       },
                       sequentialControlExecutor);
-            },
-            sequentialControlExecutor);
+            });
 
-    return Futures.catchingAsync(
+    return PropagatedFutures.catchingAsync(
         downloadFuture,
         Exception.class,
         exception -> {
@@ -1231,21 +1236,20 @@ public class FileGroupManager {
           final DataFileGroupInternal finalDfgInternal =
               (dfgInternal == null) ? DataFileGroupInternal.getDefaultInstance() : dfgInternal;
 
-          ListenableFuture<Void> resultFuture = Futures.immediateFuture(null);
+          ListenableFuture<Void> resultFuture = immediateVoidFuture();
           if (exception instanceof DownloadException) {
             LogUtil.d("%s: Logging DownloadException", TAG);
 
             DownloadException downloadException = (DownloadException) exception;
             resultFuture =
-                Futures.transformAsync(
+                transformSequentialAsync(
                     resultFuture,
                     voidArg ->
                         logDownloadFailure(
                             groupKey,
                             downloadException,
                             finalDfgInternal.getBuildId(),
-                            finalDfgInternal.getVariantId()),
-                    sequentialControlExecutor);
+                            finalDfgInternal.getVariantId()));
           } else if (exception instanceof AggregateException) {
             LogUtil.d("%s: Logging AggregateException", TAG);
 
@@ -1258,23 +1262,21 @@ public class FileGroupManager {
 
               DownloadException downloadException = (DownloadException) throwable;
               resultFuture =
-                  Futures.transformAsync(
+                  transformSequentialAsync(
                       resultFuture,
                       voidArg ->
                           logDownloadFailure(
                               groupKey,
                               downloadException,
                               finalDfgInternal.getBuildId(),
-                              finalDfgInternal.getVariantId()),
-                      sequentialControlExecutor);
+                              finalDfgInternal.getVariantId()));
             }
           }
-          return Futures.transformAsync(
+          return transformSequentialAsync(
               resultFuture,
               voidArg -> {
                 throw exception;
-              },
-              sequentialControlExecutor);
+              });
         },
         sequentialControlExecutor);
   }
@@ -1300,7 +1302,7 @@ public class FileGroupManager {
         ListenableFuture<Void> tryToShareBeforeDownload =
             tryToShareBeforeDownload(pendingGroup, dataFile, newFileKey);
         fileFuture =
-            Futures.transformAsync(
+            transformSequentialAsync(
                 tryToShareBeforeDownload,
                 (voidArg) -> {
                   ListenableFuture<Void> startDownloadFuture;
@@ -1315,21 +1317,18 @@ public class FileGroupManager {
                             pendingGroup.getGroupExtraHttpHeadersList());
                   } catch (RuntimeException e) {
                     // Catch any unchecked exceptions that prevented the download from starting.
-                    return Futures.immediateFailedFuture(
+                    return immediateFailedFuture(
                         DownloadException.builder()
                             .setDownloadResultCode(DownloadResultCode.UNKNOWN_ERROR)
                             .setCause(e)
                             .build());
                   }
                   // After file as being downloaded locally
-                  return Futures.transformAsync(
+                  return transformSequentialAsync(
                       startDownloadFuture,
-                      (downloadResult) -> {
-                        return tryToShareAfterDownload(pendingGroup, dataFile, newFileKey);
-                      },
-                      sequentialControlExecutor);
-                },
-                sequentialControlExecutor);
+                      (downloadResult) ->
+                          tryToShareAfterDownload(pendingGroup, dataFile, newFileKey));
+                });
       } else {
         try {
           fileFuture =
@@ -1343,7 +1342,7 @@ public class FileGroupManager {
         } catch (RuntimeException e) {
           // Catch any unchecked exceptions that prevented the download from starting.
           fileFuture =
-              Futures.immediateFailedFuture(
+              immediateFailedFuture(
                   DownloadException.builder()
                       .setDownloadResultCode(DownloadResultCode.UNKNOWN_ERROR)
                       .setCause(e)
@@ -1381,7 +1380,7 @@ public class FileGroupManager {
     }
 
     eventLogger.logMddDownloadResult(0, null);
-    return Futures.immediateFuture(pendingGroup);
+    return immediateFuture(pendingGroup);
   }
 
   /**
@@ -1408,7 +1407,7 @@ public class FileGroupManager {
   ListenableFuture<Void> tryToShareBeforeDownload(
       DataFileGroupInternal fileGroup, DataFile dataFile, NewFileKey newFileKey) {
     ListenableFuture<SharedFile> sharedFileFuture =
-        Futures.catchingAsync(
+        PropagatedFutures.catchingAsync(
             sharedFileManager.getSharedFile(newFileKey),
             SharedFileMissingException.class,
             e -> {
@@ -1416,10 +1415,10 @@ public class FileGroupManager {
               LogUtil.e("%s: Shared file not found, newFileKey = %s", TAG, newFileKey);
               silentFeedback.send(e, "Shared file not found in downloadFileGroup");
               logMddAndroidSharingLog(eventLogger, fileGroup, dataFile, 0);
-              return Futures.immediateFailedFuture(e);
+              return immediateFailedFuture(e);
             },
             sequentialControlExecutor);
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         sharedFileFuture,
         sharedFile -> {
           long fileExpirationDateSecs = fileGroup.getExpirationDateSecs();
@@ -1429,7 +1428,7 @@ public class FileGroupManager {
               LogUtil.d(
                   "%s: Android sharing CASE 1 for file %s, filegroup %s",
                   TAG, dataFile.getFileId(), fileGroup.getGroupName());
-              return Futures.transformAsync(
+              return transformSequentialAsync(
                   maybeUpdateLeaseAndSharedMetadata(
                       fileGroup,
                       dataFile,
@@ -1438,10 +1437,7 @@ public class FileGroupManager {
                       sharedFile.getAndroidSharingChecksum(),
                       fileExpirationDateSecs,
                       0),
-                  res -> {
-                    return Futures.immediateVoidFuture();
-                  },
-                  sequentialControlExecutor);
+                  res -> immediateVoidFuture());
             }
 
             String androidSharingChecksum = dataFile.getAndroidSharingChecksum();
@@ -1452,7 +1448,7 @@ public class FileGroupManager {
                 LogUtil.d(
                     "%s: Android sharing CASE 2 for file %s, filegroup %s",
                     TAG, dataFile.getFileId(), fileGroup.getGroupName());
-                return Futures.transformAsync(
+                return transformSequentialAsync(
                     maybeUpdateLeaseAndSharedMetadata(
                         fileGroup,
                         dataFile,
@@ -1461,10 +1457,7 @@ public class FileGroupManager {
                         androidSharingChecksum,
                         fileExpirationDateSecs,
                         0),
-                    res -> {
-                      return Futures.immediateVoidFuture();
-                    },
-                    sequentialControlExecutor);
+                    res -> immediateVoidFuture());
               }
 
               // case 3: the to-be-shared file is available in the local storage.
@@ -1483,7 +1476,7 @@ public class FileGroupManager {
                     dataFile,
                     fileStorage,
                     /* afterDownload = */ false);
-                return Futures.transformAsync(
+                return transformSequentialAsync(
                     maybeUpdateLeaseAndSharedMetadata(
                         fileGroup,
                         dataFile,
@@ -1492,10 +1485,7 @@ public class FileGroupManager {
                         androidSharingChecksum,
                         fileExpirationDateSecs,
                         0),
-                    res -> {
-                      return Futures.immediateVoidFuture();
-                    },
-                    sequentialControlExecutor);
+                    res -> immediateVoidFuture());
               }
             }
           } catch (AndroidSharingException e) {
@@ -1504,9 +1494,8 @@ public class FileGroupManager {
           LogUtil.d(
               "%s: File couldn't be shared before download %s, filegroup %s",
               TAG, dataFile.getFileId(), fileGroup.getGroupName());
-          return Futures.immediateVoidFuture();
-        },
-        sequentialControlExecutor);
+          return immediateVoidFuture();
+        });
   }
 
   /**
@@ -1532,7 +1521,7 @@ public class FileGroupManager {
   ListenableFuture<Void> tryToShareAfterDownload(
       DataFileGroupInternal fileGroup, DataFile dataFile, NewFileKey newFileKey) {
     ListenableFuture<SharedFile> sharedFileFuture =
-        Futures.catchingAsync(
+        PropagatedFutures.catchingAsync(
             sharedFileManager.getSharedFile(newFileKey),
             SharedFileMissingException.class,
             e -> {
@@ -1540,17 +1529,17 @@ public class FileGroupManager {
               LogUtil.e("%s: Shared file not found, newFileKey = %s", TAG, newFileKey);
               silentFeedback.send(e, "Shared file not found in downloadFileGroup");
               logMddAndroidSharingLog(eventLogger, fileGroup, dataFile, 0);
-              return Futures.immediateFailedFuture(e);
+              return immediateFailedFuture(e);
             },
             sequentialControlExecutor);
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         sharedFileFuture,
         sharedFile -> {
           String androidSharingChecksum = dataFile.getAndroidSharingChecksum();
           long fileExpirationDateSecs = fileGroup.getExpirationDateSecs();
           // NOTE: if the file wasn't downloaded this method should be no-op.
           if (sharedFile.getFileStatus() != FileStatus.DOWNLOAD_COMPLETE) {
-            return Futures.immediateVoidFuture();
+            return immediateVoidFuture();
           }
 
           if (sharedFile.getAndroidShared()) {
@@ -1561,7 +1550,7 @@ public class FileGroupManager {
                   "%s: File already shared after downloaded but lease has to be updated"
                       + " for file %s, filegroup %s",
                   TAG, dataFile.getFileId(), fileGroup.getGroupName());
-              return Futures.transformAsync(
+              return transformSequentialAsync(
                   maybeUpdateLeaseAndSharedMetadata(
                       fileGroup,
                       dataFile,
@@ -1575,11 +1564,10 @@ public class FileGroupManager {
                       return updateMaxExpirationDateSecs(
                           fileGroup, dataFile, newFileKey, fileExpirationDateSecs);
                     }
-                    return Futures.immediateVoidFuture();
-                  },
-                  sequentialControlExecutor);
+                    return immediateVoidFuture();
+                  });
             }
-            return Futures.immediateVoidFuture();
+            return immediateVoidFuture();
           }
           try {
             if (!TextUtils.isEmpty(androidSharingChecksum)) {
@@ -1590,7 +1578,7 @@ public class FileGroupManager {
                 LogUtil.d(
                     "%s: Android sharing after downloaded, CASE 1 for file %s, filegroup %s",
                     TAG, dataFile.getFileId(), fileGroup.getGroupName());
-                return Futures.transformAsync(
+                return transformSequentialAsync(
                     maybeUpdateLeaseAndSharedMetadata(
                         fileGroup,
                         dataFile,
@@ -1602,12 +1590,11 @@ public class FileGroupManager {
                     res -> {
                       if (res) {
                         deleteLocalCopy(downloadFileOnDeviceUri, fileGroup, dataFile);
-                        return Futures.immediateVoidFuture();
+                        return immediateVoidFuture();
                       }
                       return updateMaxExpirationDateSecs(
                           fileGroup, dataFile, newFileKey, fileExpirationDateSecs);
-                    },
-                    sequentialControlExecutor);
+                    });
               }
 
               // case 2: the file is configured to be shared.
@@ -1624,7 +1611,7 @@ public class FileGroupManager {
                     dataFile,
                     fileStorage,
                     /* afterDownload = */ true);
-                return Futures.transformAsync(
+                return transformSequentialAsync(
                     maybeUpdateLeaseAndSharedMetadata(
                         fileGroup,
                         dataFile,
@@ -1636,12 +1623,11 @@ public class FileGroupManager {
                     res -> {
                       if (res) {
                         deleteLocalCopy(downloadFileOnDeviceUri, fileGroup, dataFile);
-                        return Futures.immediateVoidFuture();
+                        return immediateVoidFuture();
                       }
                       return updateMaxExpirationDateSecs(
                           fileGroup, dataFile, newFileKey, fileExpirationDateSecs);
-                    },
-                    sequentialControlExecutor);
+                    });
               }
             }
             // The file was supposed to be shared but it wasn't.
@@ -1659,8 +1645,7 @@ public class FileGroupManager {
               TAG, dataFile.getFileId(), fileGroup.getGroupName());
           return updateMaxExpirationDateSecs(
               fileGroup, dataFile, newFileKey, fileExpirationDateSecs);
-        },
-        sequentialControlExecutor);
+        });
   }
 
   /**
@@ -1675,7 +1660,7 @@ public class FileGroupManager {
       long fileExpirationDateSecs) {
     ListenableFuture<Boolean> updateFuture =
         sharedFileManager.updateMaxExpirationDateSecs(newFileKey, fileExpirationDateSecs);
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         updateFuture,
         res -> {
           if (!res) {
@@ -1684,9 +1669,8 @@ public class FileGroupManager {
                 TAG, dataFile.getFileId(), fileGroup.getGroupName());
             logMddAndroidSharingLog(eventLogger, fileGroup, dataFile, 0);
           }
-          return Futures.immediateVoidFuture();
-        },
-        sequentialControlExecutor);
+          return immediateVoidFuture();
+        });
   }
 
   /**
@@ -1713,13 +1697,13 @@ public class FileGroupManager {
       // The callingPackage has already a lease on the file which expires after the current
       // expiration date.
       logMddAndroidSharingLog(eventLogger, fileGroup, dataFile, evetTypeToLog);
-      return Futures.immediateFuture(true);
+      return immediateFuture(true);
     }
 
     long maxExpiryDate = max(fileExpirationDateSecs, sharedFile.getMaxExpirationDateSecs());
     AndroidSharingUtil.acquireLease(
         context, androidSharingChecksum, maxExpiryDate, fileGroup, dataFile, fileStorage);
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         sharedFileManager.setAndroidSharedDownloadedFileEntry(
             newFileKey, androidSharingChecksum, maxExpiryDate),
         res -> {
@@ -1728,13 +1712,12 @@ public class FileGroupManager {
                 "%s: Failed to set new state for file %s, filegroup %s",
                 TAG, dataFile.getFileId(), fileGroup.getGroupName());
             logMddAndroidSharingLog(eventLogger, fileGroup, dataFile, 0);
-            return Futures.immediateFuture(false);
+            return immediateFuture(false);
           }
           logMddAndroidSharingLog(
               eventLogger, fileGroup, dataFile, evetTypeToLog, true, maxExpiryDate);
-          return Futures.immediateFuture(true);
-        },
-        sequentialControlExecutor);
+          return immediateFuture(true);
+        });
   }
 
   /**
@@ -1788,12 +1771,11 @@ public class FileGroupManager {
   // TODO: Change name to downloadAndVerifyAllPendingGroups.
   public ListenableFuture<Void> scheduleAllPendingGroupsForDownload(
       boolean onWifi, AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.getAllGroupKeys(),
         propagateAsyncFunction(
             groupKeyList ->
-                schedulePendingDownloads(groupKeyList, onWifi, customFileGroupValidator)),
-        sequentialControlExecutor);
+                schedulePendingDownloads(groupKeyList, onWifi, customFileGroupValidator)));
   }
 
   @SuppressWarnings("nullness")
@@ -1811,7 +1793,7 @@ public class FileGroupManager {
       }
 
       allGroupFutures.add(
-          Futures.transformAsync(
+          transformSequentialAsync(
               fileGroupsMetadata.read(key),
               pendingGroup -> {
                 if (pendingGroup == null) {
@@ -1850,13 +1832,13 @@ public class FileGroupManager {
                   return downloadFileGroup(
                       key, pendingGroup.getDownloadConditions(), customFileGroupValidator);
                 }
-                return Futures.immediateFuture(null);
-              },
-              sequentialControlExecutor));
+                return immediateFuture(null);
+              }));
     }
     // Note: We use whenAllComplete instead of whenAllSucceed since we want to continue to download
     // all other file groups even if one or more fail.
-    return Futures.whenAllComplete(allGroupFutures).call(() -> null, sequentialControlExecutor);
+    return PropagatedFutures.whenAllComplete(allGroupFutures)
+        .call(() -> null, sequentialControlExecutor);
   }
 
   /**
@@ -1874,19 +1856,11 @@ public class FileGroupManager {
       DataFileGroupInternal pendingGroup,
       AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
     return verifyGroupDownloaded(
-        groupKey, pendingGroup, /* removePendingVersion = */ true, customFileGroupValidator);
-  }
-
-  // TODO(b/159828199): This is only needed to pass success booleans through a transform chain.
-  private static final class SuccessAndExistingFileGroup {
-    private final boolean success;
-    private final Optional<DataFileGroupInternal> existingFileGroup;
-
-    private SuccessAndExistingFileGroup(
-        boolean success, Optional<DataFileGroupInternal> existingFileGroup) {
-      this.success = success;
-      this.existingFileGroup = existingFileGroup;
-    }
+        groupKey,
+        pendingGroup,
+        /* removePendingVersion = */ true,
+        customFileGroupValidator,
+        /* downloadStateLogger = */ DownloadStateLogger.forDownload(eventLogger));
   }
 
   /**
@@ -1900,80 +1874,43 @@ public class FileGroupManager {
    * @return A future that resolves to true if the given group was verify for download, false
    *     otherwise.
    */
-  // TODO: We currently use immediateFuture() in this method for the sake of facilitating
-  // the refactor to async - this method should be made genuinely async as the refactor is carried
-  // out.
   private ListenableFuture<GroupDownloadStatus> verifyGroupDownloaded(
       GroupKey groupKey,
       DataFileGroupInternal fileGroup,
       boolean removePendingVersion,
-      AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
+      AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator,
+      DownloadStateLogger downloadStateLogger) {
     LogUtil.d(
         "%s: Verify group: %s, remove pending version: %s",
         TAG, fileGroup.getGroupName(), removePendingVersion);
 
+    GroupKey downloadedGroupKey = groupKey.toBuilder().setDownloaded(true).build();
+    GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
+
     DataFileGroupInternal downloadedFileGroupWithTimestamp =
         FileGroupUtil.setDownloadedTimestampInMillis(fileGroup, timeSource.currentTimeMillis());
 
-    return FluentFuture.from(getFileGroupDownloadStatus(fileGroup))
+    return PropagatedFluentFuture.from(getFileGroupDownloadStatus(fileGroup))
         .transformAsync(
             groupDownloadStatus -> {
               // TODO(b/159828199) Use exceptions instead of nesting to exit early from transform
               // chain.
               if (groupDownloadStatus == GroupDownloadStatus.FAILED) {
-                logEventWithDataFileGroup(0, eventLogger, fileGroup);
+                downloadStateLogger.logFailed(fileGroup);
                 return Futures.immediateFuture(GroupDownloadStatus.FAILED);
               }
               if (groupDownloadStatus == GroupDownloadStatus.PENDING) {
-                logEventWithDataFileGroup(0, eventLogger, fileGroup);
+                downloadStateLogger.logPending(fileGroup);
                 return Futures.immediateFuture(GroupDownloadStatus.PENDING);
               }
 
               Preconditions.checkArgument(groupDownloadStatus == GroupDownloadStatus.DOWNLOADED);
-              return FluentFuture.from(customFileGroupValidator.apply(fileGroup))
-                  .transformAsync(
-                      validatedOk -> {
-                        if (!validatedOk) {
-                          logEventWithDataFileGroup(0, eventLogger, fileGroup);
-
-                          ListenableFuture<Boolean> removePendingGroupFuture =
-                              Futures.immediateFuture(true);
-                          if (removePendingVersion) {
-                            GroupKey fileGroupKey =
-                                groupKey.toBuilder().setDownloaded(false).build();
-                            removePendingGroupFuture = fileGroupsMetadata.remove(fileGroupKey);
-                          }
-                          return Futures.transformAsync(
-                              removePendingGroupFuture,
-                              propagateAsyncFunction(
-                                  removeSuccess -> {
-                                    if (!removeSuccess) {
-                                      LogUtil.e(
-                                          "%s: Failed to remove pending version for group: '%s';"
-                                              + " account: '%s'",
-                                          TAG, groupKey.getGroupName(), groupKey.getAccount());
-                                      eventLogger.logEventSampled(0);
-                                      return Futures.immediateFailedFuture(
-                                          new IOException(
-                                              "Failed to remove pending group: "
-                                                  + groupKey.getGroupName()));
-                                    }
-                                    return Futures.immediateFailedFuture(
-                                        DownloadException.builder()
-                                            .setDownloadResultCode(
-                                                DownloadResultCode
-                                                    .CUSTOM_FILEGROUP_VALIDATION_FAILED)
-                                            .setMessage(
-                                                DownloadResultCode
-                                                    .CUSTOM_FILEGROUP_VALIDATION_FAILED
-                                                    .name())
-                                            .build());
-                                  }),
-                              sequentialControlExecutor);
-                        }
-                        return Futures.immediateFuture(GroupDownloadStatus.DOWNLOADED);
-                      },
-                      sequentialControlExecutor)
+              return validateFileGroupAndMaybeRemoveIfFailed(
+                      pendingGroupKey,
+                      fileGroup,
+                      downloadStateLogger,
+                      removePendingVersion,
+                      customFileGroupValidator)
                   .transformAsync(
                       unused -> {
                         // Create isolated file structure (using symlinks) if necessary and
@@ -1982,99 +1919,141 @@ public class FileGroupManager {
                             && VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) {
                           return createIsolatedFilePaths(fileGroup);
                         }
-                        return Futures.immediateVoidFuture();
+                        return immediateVoidFuture();
                       },
                       sequentialControlExecutor)
                   .transformAsync(
-                      unused -> {
-                        GroupKey downloadedGroupKey =
-                            groupKey.toBuilder().setDownloaded(true).build();
-                        return Futures.transform(
-                            fileGroupsMetadata.read(downloadedGroupKey),
-                            Optional::fromNullable,
-                            sequentialControlExecutor);
-                      },
+                      unused ->
+                          writeNewGroupAndReturnOldGroup(
+                              downloadedGroupKey, downloadedFileGroupWithTimestamp),
                       sequentialControlExecutor)
                   .transformAsync(
-                      existingFileGroupOptional -> {
-                        // Put the newly downloaded version in the downloaded groups list.
-                        GroupKey downloadedGroupKey =
-                            groupKey.toBuilder().setDownloaded(true).build();
-                        return Futures.transform(
-                            fileGroupsMetadata.write(
-                                downloadedGroupKey, downloadedFileGroupWithTimestamp),
-                            propagateFunction(
-                                writeSuccess ->
-                                    new SuccessAndExistingFileGroup(
-                                        writeSuccess, existingFileGroupOptional)),
-                            sequentialControlExecutor);
-                      },
-                      sequentialControlExecutor)
-                  .transformAsync(
-                      writeSuccessAndDownloadedGroup -> {
-                        if (!writeSuccessAndDownloadedGroup.success) {
-                          eventLogger.logEventSampled(0);
-                          return Futures.immediateFailedFuture(
-                              new IOException(
-                                  "Failed to write updated group: " + groupKey.getGroupName()));
+                      downloadedGroupOptional -> {
+                        if (removePendingVersion) {
+                          return removePendingGroup(pendingGroupKey, downloadedGroupOptional);
                         }
 
-                        ListenableFuture<Boolean> removePendingGroupFuture =
-                            Futures.immediateFuture(true);
-                        if (removePendingVersion) {
-                          // Remove the newly downloaded version from the pending groups list,
-                          // if removing fails, we will verify it again the next time.
-                          GroupKey fileGroupKey = groupKey.toBuilder().setDownloaded(false).build();
-                          removePendingGroupFuture = fileGroupsMetadata.remove(fileGroupKey);
-                        }
-                        return Futures.transform(
-                            removePendingGroupFuture,
-                            propagateFunction(
-                                removeSuccess ->
-                                    new SuccessAndExistingFileGroup(
-                                        removeSuccess,
-                                        writeSuccessAndDownloadedGroup.existingFileGroup)),
-                            sequentialControlExecutor);
+                        return immediateFuture(downloadedGroupOptional);
                       },
                       sequentialControlExecutor)
-                  .transformAsync(
-                      removeSuccessAndDownloadedGroup -> {
-                        if (!removeSuccessAndDownloadedGroup.success) {
-                          eventLogger.logEventSampled(0);
-                        }
-                        ListenableFuture<Void> maybeAddStaleGroupFuture =
-                            Futures.immediateVoidFuture();
-                        if (removeSuccessAndDownloadedGroup.existingFileGroup.isPresent()) {
-                          maybeAddStaleGroupFuture =
-                              Futures.transform(
-                                  fileGroupsMetadata.addStaleGroup(
-                                      removeSuccessAndDownloadedGroup.existingFileGroup.get()),
-                                  propagateFunction(
-                                      addSuccess -> {
-                                        if (!addSuccess) {
-                                          // If this fails, the stale file group will be
-                                          // unaccounted for, and the files will get deleted
-                                          // in the next daily maintenance, hence not
-                                          // enforcing its stale lifetime.
-                                          eventLogger.logEventSampled(0);
-                                        }
-                                        return null;
-                                      }),
-                                  sequentialControlExecutor);
-                        }
-                        return maybeAddStaleGroupFuture;
-                      },
-                      sequentialControlExecutor)
+                  .transformAsync(this::addGroupAsStaleIfPresent, sequentialControlExecutor)
                   .transform(
                       voidArg -> {
-                        logEventWithDataFileGroup(0, eventLogger, downloadedFileGroupWithTimestamp);
-
-                        logDownloadLatency(downloadedFileGroupWithTimestamp);
+                        downloadStateLogger.logComplete(downloadedFileGroupWithTimestamp);
                         return GroupDownloadStatus.DOWNLOADED;
                       },
                       sequentialControlExecutor);
             },
+            sequentialControlExecutor)
+        .transformAsync(
+            downloadStatus ->
+                transformSequential(
+                    downloadStageManager.updateExperimentIds(fileGroup.getGroupName()),
+                    success -> downloadStatus),
             sequentialControlExecutor);
+  }
+
+  private ListenableFuture<Optional<DataFileGroupInternal>> writeNewGroupAndReturnOldGroup(
+      GroupKey downloadedGroupKey, DataFileGroupInternal newGroup) {
+    PropagatedFluentFuture<Optional<DataFileGroupInternal>> existingFileGroup =
+        PropagatedFluentFuture.from(fileGroupsMetadata.read(downloadedGroupKey))
+            .transform(Optional::fromNullable, sequentialControlExecutor);
+
+    return existingFileGroup
+        .transformAsync(
+            unused -> fileGroupsMetadata.write(downloadedGroupKey, newGroup),
+            sequentialControlExecutor)
+        .transformAsync(
+            writeSuccess -> {
+              if (!writeSuccess) {
+                eventLogger.logEventSampled(0);
+                return immediateFailedFuture(
+                    new IOException(
+                        "Failed to write updated group: " + downloadedGroupKey.getGroupName()));
+              }
+
+              return existingFileGroup;
+            },
+            sequentialControlExecutor);
+  }
+
+  private ListenableFuture<Optional<DataFileGroupInternal>> removePendingGroup(
+      GroupKey pendingGroupKey, Optional<DataFileGroupInternal> toReturn) {
+    // Remove the newly downloaded version from the pending groups list,
+    // if removing fails, we will verify it again the next time.
+    return transformSequential(
+        fileGroupsMetadata.remove(pendingGroupKey),
+        removeSuccess -> {
+          if (!removeSuccess) {
+            eventLogger.logEventSampled(0);
+          }
+          return toReturn;
+        });
+  }
+
+  private PropagatedFluentFuture<Void> validateFileGroupAndMaybeRemoveIfFailed(
+      GroupKey pendingGroupKey,
+      DataFileGroupInternal fileGroup,
+      DownloadStateLogger downloadStateLogger,
+      boolean removePendingVersion,
+      AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator)
+      throws Exception {
+    return PropagatedFluentFuture.from(customFileGroupValidator.apply(fileGroup))
+        .transformAsync(
+            validatedOk -> {
+              if (validatedOk) {
+                return immediateVoidFuture();
+              }
+
+              downloadStateLogger.logFailed(fileGroup);
+
+              ListenableFuture<Boolean> removePendingGroupFuture = immediateFuture(true);
+              if (removePendingVersion) {
+                removePendingGroupFuture = fileGroupsMetadata.remove(pendingGroupKey);
+              }
+              return transformSequentialAsync(
+                  removePendingGroupFuture,
+                  removeSuccess -> {
+                    if (!removeSuccess) {
+                      LogUtil.e(
+                          "%s: Failed to remove pending version for group: '%s';"
+                              + " account: '%s'",
+                          TAG, pendingGroupKey.getGroupName(), pendingGroupKey.getAccount());
+                      eventLogger.logEventSampled(0);
+                      return immediateFailedFuture(
+                          new IOException(
+                              "Failed to remove pending group: " + pendingGroupKey.getGroupName()));
+                    }
+                    return immediateFailedFuture(
+                        DownloadException.builder()
+                            .setDownloadResultCode(
+                                DownloadResultCode.CUSTOM_FILEGROUP_VALIDATION_FAILED)
+                            .setMessage(
+                                DownloadResultCode.CUSTOM_FILEGROUP_VALIDATION_FAILED.name())
+                            .build());
+                  });
+            },
+            sequentialControlExecutor);
+  }
+
+  private ListenableFuture<Void> addGroupAsStaleIfPresent(
+      Optional<DataFileGroupInternal> oldGroup) {
+    if (!oldGroup.isPresent()) {
+      return immediateVoidFuture();
+    }
+
+    return transformSequentialAsync(
+        fileGroupsMetadata.addStaleGroup(oldGroup.get()),
+        addSuccess -> {
+          if (!addSuccess) {
+            // If this fails, the stale file group will be
+            // unaccounted for, and the files will get deleted
+            // in the next daily maintenance, hence not
+            // enforcing its stale lifetime.
+            eventLogger.logEventSampled(0);
+          }
+          return immediateVoidFuture();
+        });
   }
 
   /**
@@ -2094,14 +2073,14 @@ public class FileGroupManager {
   private ListenableFuture<Void> createIsolatedFilePaths(DataFileGroupInternal dataFileGroup) {
     // If no isolated structure is required, return early.
     if (!dataFileGroup.getPreserveFilenamesAndIsolateFiles()) {
-      return Futures.immediateVoidFuture();
+      return immediateVoidFuture();
     }
 
     // Remove existing symlinks if they exist
     try {
       FileGroupUtil.removeIsolatedFileStructure(context, instanceId, dataFileGroup, fileStorage);
     } catch (IOException e) {
-      return Futures.immediateFailedFuture(
+      return immediateFailedFuture(
           DownloadException.builder()
               .setDownloadResultCode(DownloadResultCode.UNABLE_TO_REMOVE_SYMLINK_STRUCTURE)
               .setMessage("Unable to cleanup symlink structure")
@@ -2114,7 +2093,7 @@ public class FileGroupManager {
     for (DataFile dataFile : dataFileGroup.getFileList()) {
       if (dataFile.getAndroidSharingType() == AndroidSharingType.ANDROID_BLOB_WHEN_AVAILABLE) {
         createSymlinkFutures.add(
-            Futures.immediateFailedFuture(
+            immediateFailedFuture(
                 new UnsupportedOperationException(
                     "Preserve File Paths is invalid with Android Blob Sharing")));
         // break out of loop since we've already hit a failure.
@@ -2123,7 +2102,7 @@ public class FileGroupManager {
 
       // Get the original path
       ListenableFuture<Void> createSymlinkFuture =
-          Futures.transformAsync(
+          transformSequentialAsync(
               getOnDeviceUri(dataFile, dataFileGroup),
               (Uri originalUri) -> {
                 Uri symlinkUri =
@@ -2141,7 +2120,7 @@ public class FileGroupManager {
                   }
                   SymlinkUtil.createSymlink(context, symlinkUri, checkNotNull(originalUri));
                 } catch (IOException e) {
-                  return Futures.immediateFailedFuture(
+                  return immediateFailedFuture(
                       DownloadException.builder()
                           .setDownloadResultCode(
                               DownloadResultCode.UNABLE_TO_CREATE_SYMLINK_STRUCTURE)
@@ -2149,15 +2128,14 @@ public class FileGroupManager {
                           .setCause(e)
                           .build());
                 }
-                return Futures.immediateVoidFuture();
-              },
-              sequentialControlExecutor);
+                return immediateVoidFuture();
+              });
       createSymlinkFutures.add(createSymlinkFuture);
     }
     ListenableFuture<Void> combinedFuture =
         Futures.whenAllSucceed(createSymlinkFutures).call(() -> null, sequentialControlExecutor);
 
-    Futures.addCallback(
+    PropagatedFutures.addCallback(
         combinedFuture,
         new FutureCallback<Void>() {
           @Override
@@ -2236,25 +2214,24 @@ public class FileGroupManager {
         || dataFileGroup == null
         || !isDownloaded
         || !FileGroupUtil.isIsolatedStructureAllowed(dataFileGroup)) {
-      return Futures.immediateFuture(true);
+      return immediateFuture(true);
     }
 
     List<ListenableFuture<Void>> verifyIsolatedFileFutures =
         new ArrayList<>(dataFileGroup.getFileCount());
     for (DataFile dataFile : dataFileGroup.getFileList()) {
       verifyIsolatedFileFutures.add(
-          Futures.transformAsync(
+          transformSequentialAsync(
               getOnDeviceUri(dataFile, dataFileGroup),
               onDeviceUri -> {
                 if (onDeviceUri != null) {
                   Uri unused = getAndVerifyIsolatedFileUri(onDeviceUri, dataFile, dataFileGroup);
                 }
                 return immediateVoidFuture();
-              },
-              sequentialControlExecutor));
+              }));
     }
 
-    return Futures.catching(
+    return PropagatedFutures.catching(
         Futures.whenAllSucceed(verifyIsolatedFileFutures)
             .call(() -> true, sequentialControlExecutor),
         IOException.class,
@@ -2285,7 +2262,7 @@ public class FileGroupManager {
       DataFile dataFile, DataFileGroupInternal dataFileGroup) {
     // If sideloaded file -- return url immediately
     if (FileGroupUtil.isSideloadedFile(dataFile)) {
-      return Futures.immediateFuture(Uri.parse(dataFile.getUrlToDownload()));
+      return immediateFuture(Uri.parse(dataFile.getUrlToDownload()));
     }
 
     NewFileKey newFileKey =
@@ -2330,7 +2307,7 @@ public class FileGroupManager {
       NewFileKey newFileKey =
           SharedFilesMetadata.createKeyFromDataFile(
               dataFile, dataFileGroup.getAllowedReadersEnum());
-      return FluentFuture.from(sharedFileManager.getFileStatus(newFileKey))
+      return PropagatedFluentFuture.from(sharedFileManager.getFileStatus(newFileKey))
           .catchingAsync(
               SharedFileMissingException.class,
               e -> {
@@ -2339,7 +2316,7 @@ public class FileGroupManager {
                     "%s: Encountered SharedFileMissingException for group: %s",
                     TAG, dataFileGroup.getGroupName());
                 silentFeedback.send(e, "Shared file not found in getFileGroupDownloadStatus");
-                return Futures.immediateFuture(FileStatus.NONE);
+                return immediateFuture(FileStatus.NONE);
               },
               sequentialControlExecutor)
           .transformAsync(
@@ -2375,11 +2352,11 @@ public class FileGroupManager {
               },
               sequentialControlExecutor);
     } else if (downloadFailed) { // index == fileCount
-      return Futures.immediateFuture(GroupDownloadStatus.FAILED);
+      return immediateFuture(GroupDownloadStatus.FAILED);
     } else if (downloadPending) {
-      return Futures.immediateFuture(GroupDownloadStatus.PENDING);
+      return immediateFuture(GroupDownloadStatus.PENDING);
     } else {
-      return Futures.immediateFuture(GroupDownloadStatus.DOWNLOADED);
+      return immediateFuture(GroupDownloadStatus.DOWNLOADED);
     }
   }
 
@@ -2392,12 +2369,11 @@ public class FileGroupManager {
   // TODO(b/124072754): Change to package private once all code is refactored.
   public ListenableFuture<Void> verifyAllPendingGroupsDownloaded(
       AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.getAllGroupKeys(),
         propagateAsyncFunction(
             groupKeyList ->
-                verifyAllPendingGroupsDownloaded(groupKeyList, customFileGroupValidator)),
-        sequentialControlExecutor);
+                verifyAllPendingGroupsDownloaded(groupKeyList, customFileGroupValidator)));
   }
 
   @SuppressWarnings("nullness")
@@ -2412,63 +2388,60 @@ public class FileGroupManager {
         continue;
       }
       allFileFutures.add(
-          Futures.transformAsync(
+          transformSequentialAsync(
               fileGroupsMetadata.read(groupKey),
               pendingGroup -> {
                 if (pendingGroup == null) {
-                  return Futures.immediateFuture(null);
+                  return immediateFuture(null);
                 }
                 return verifyPendingGroupDownloaded(
                     groupKey, pendingGroup, customFileGroupValidator);
-              },
-              sequentialControlExecutor));
+              }));
     }
-    return Futures.whenAllComplete(allFileFutures).call(() -> null, sequentialControlExecutor);
+    return PropagatedFutures.whenAllComplete(allFileFutures)
+        .call(() -> null, sequentialControlExecutor);
   }
 
   // TODO(b/124072754): Change to package private once all code is refactored.
   public ListenableFuture<Void> deleteUninstalledAppGroups() {
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.getAllGroupKeys(),
         groupKeyList -> {
           List<ListenableFuture<Void>> removeGroupFutures = new ArrayList<>();
           for (GroupKey key : groupKeyList) {
             if (!isAppInstalled(key.getOwnerPackage())) {
               removeGroupFutures.add(
-                  Futures.transformAsync(
+                  transformSequentialAsync(
                       fileGroupsMetadata.read(key),
                       group -> {
                         if (group == null) {
-                          return Futures.immediateFuture(null);
+                          return immediateVoidFuture();
                         }
                         LogUtil.d(
                             "%s: Deleting file group %s for uninstalled app %s",
                             TAG, key.getGroupName(), key.getOwnerPackage());
                         eventLogger.logEventSampled(0);
-                        return Futures.transform(
+                        return transformSequentialAsync(
                             fileGroupsMetadata.remove(key),
                             removeSuccess -> {
                               if (!removeSuccess) {
                                 eventLogger.logEventSampled(0);
                               }
-                              return null;
-                            },
-                            sequentialControlExecutor);
-                      },
-                      sequentialControlExecutor));
+                              return immediateVoidFuture();
+                            });
+                      }));
             }
           }
-          return Futures.whenAllComplete(removeGroupFutures)
+          return PropagatedFutures.whenAllComplete(removeGroupFutures)
               .call(() -> null, sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+        });
   }
 
   ListenableFuture<Void> deleteRemovedAccountGroups() {
     // In the library case, the account manager should be present. But in the GmsCore service case,
     // the account manager is absent, and the removed-account check is skipped.
     if (!accountSourceOptional.isPresent()) {
-      return Futures.immediateFuture(null);
+      return immediateVoidFuture();
     }
 
     ImmutableSet<String> serializedAccounts;
@@ -2478,10 +2451,10 @@ public class FileGroupManager {
       // getSerializedGoogleAccounts could throw a SecurityException, which will bubble up and
       // prevent any other maintenance tasks from being performed. Instead, catch it and wrap it in
       // an LF so other tasks are performed even if this fails.
-      return Futures.immediateFailedFuture(e);
+      return immediateFailedFuture(e);
     }
 
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.getAllGroupKeys(),
         groupKeyList -> {
           List<ListenableFuture<Void>> removeGroupFutures = new ArrayList<>();
@@ -2491,11 +2464,11 @@ public class FileGroupManager {
             }
 
             removeGroupFutures.add(
-                Futures.transformAsync(
+                transformSequentialAsync(
                     fileGroupsMetadata.read(key),
                     group -> {
                       if (group == null) {
-                        return Futures.immediateFuture(null);
+                        return immediateVoidFuture();
                       }
 
                       LogUtil.d(
@@ -2504,42 +2477,20 @@ public class FileGroupManager {
                       logEventWithDataFileGroup(0, eventLogger, group);
 
                       // Remove the group from fresh file groups if the account is removed.
-                      return Futures.transform(
+                      return transformSequentialAsync(
                           fileGroupsMetadata.remove(key),
                           removeSuccess -> {
                             if (!removeSuccess) {
                               logEventWithDataFileGroup(0, eventLogger, group);
                             }
-                            return null;
-                          },
-                          sequentialControlExecutor);
-                    },
-                    sequentialControlExecutor));
+                            return immediateVoidFuture();
+                          });
+                    }));
           }
 
-          return Futures.whenAllComplete(removeGroupFutures)
+          return PropagatedFutures.whenAllComplete(removeGroupFutures)
               .call(() -> null, sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
-  }
-
-  private void logDownloadLatency(DataFileGroupInternal fileGroup) {
-    Void fileGroupDetails = null;
-
-    DataFileGroupBookkeeping bookkeeping = fileGroup.getBookkeeping();
-    if (bookkeeping.getDownloadStartedCount() == 0) {
-      // The file group was downloaded before. Don't log download latency in this case, because
-      // logging this will skew our metrics.
-      LogUtil.d("%s: The file group is downloaded immediately.", TAG);
-    } else {
-      long newFilesReceivedTimestamp = bookkeeping.getGroupNewFilesReceivedTimestamp();
-      long downloadStartedTimestamp = bookkeeping.getGroupDownloadStartedTimestampInMillis();
-      long downloadCompleteTimestamp = bookkeeping.getGroupDownloadedTimestampInMillis();
-
-      Void downloadLatency = null;
-
-      eventLogger.logMddDownloadLatency(fileGroupDetails, downloadLatency);
-    }
+        });
   }
 
   /**
@@ -2568,30 +2519,28 @@ public class FileGroupManager {
     // Variables captured in lambdas must be effectively final.
     DataFileGroupInternal pendingGroupCapture = pendingGroup;
     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.write(pendingGroupKey, pendingGroup),
         writeSuccess -> {
           if (!writeSuccess) {
             eventLogger.logEventSampled(0);
-            return Futures.immediateFailedFuture(
-                new IOException("Unable to update file group metadata"));
+            return immediateFailedFuture(new IOException("Unable to update file group metadata"));
           }
 
           // Only log download stated event when bookkeping is successfully updated upon the first
           // download attempt (for dedup purposes).
           if (firstDownloadAttempt) {
-            logEventWithDataFileGroup(0, eventLogger, pendingGroupCapture);
+            DownloadStateLogger.forDownload(eventLogger).logStarted(pendingGroupCapture);
           }
 
-          return Futures.immediateFuture(pendingGroupCapture);
-        },
-        sequentialControlExecutor);
+          return immediateFuture(pendingGroupCapture);
+        });
   }
 
   /** Gets a set of {@link NewFileKey}'s which are referenced by some fresh group. */
   private ListenableFuture<ImmutableSet<NewFileKey>> getFileKeysReferencedByFreshGroups() {
     ImmutableSet.Builder<NewFileKey> referencedFileKeys = ImmutableSet.builder();
-    return Futures.transform(
+    return transformSequential(
         fileGroupsMetadata.getAllFreshGroups(),
         pairs -> {
           for (Pair<GroupKey, DataFileGroupInternal> pair : pairs) {
@@ -2604,8 +2553,7 @@ public class FileGroupManager {
             }
           }
           return referencedFileKeys.build();
-        },
-        sequentialControlExecutor);
+        });
   }
 
   /** Logs download failure remotely via {@code eventLogger}. */
@@ -2613,13 +2561,12 @@ public class FileGroupManager {
       GroupKey groupKey, DownloadException downloadException, long buildId, String variantId) {
     Void groupDetails = null;
 
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.read(groupKey.toBuilder().setDownloaded(false).build()),
         dataFileGroup -> {
           eventLogger.logMddDownloadResult(0, groupDetails);
-          return Futures.immediateFuture(null);
-        },
-        sequentialControlExecutor);
+          return immediateVoidFuture();
+        });
   }
 
   private ListenableFuture<Boolean> subscribeGroup(DataFileGroupInternal dataFileGroup) {
@@ -2641,7 +2588,7 @@ public class FileGroupManager {
       NewFileKey newFileKey =
           SharedFilesMetadata.createKeyFromDataFile(
               dataFile, dataFileGroup.getAllowedReadersEnum());
-      return Futures.transformAsync(
+      return transformSequentialAsync(
           sharedFileManager.reserveFileEntry(newFileKey),
           success -> {
             if (!success) {
@@ -2650,14 +2597,13 @@ public class FileGroupManager {
               LogUtil.e(
                   "%s: Subscribing to file failed for group: %s",
                   TAG, dataFileGroup.getGroupName());
-              return Futures.immediateFuture(false);
+              return immediateFuture(false);
             } else {
               return subscribeGroup(dataFileGroup, index + 1, fileCount);
             }
-          },
-          sequentialControlExecutor);
+          });
     } else {
-      return Futures.immediateFuture(true);
+      return immediateFuture(true);
     }
   }
 
@@ -2665,27 +2611,25 @@ public class FileGroupManager {
       GroupKey groupKey, DataFileGroupInternal dataFileGroup) {
     // Search for a non-downloaded version of this group.
     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.read(pendingGroupKey),
         pendingGroup -> {
           if (pendingGroup != null) {
-            return Futures.immediateFuture(areSameGroup(dataFileGroup, pendingGroup));
+            return immediateFuture(areSameGroup(dataFileGroup, pendingGroup));
           }
 
           // Search for a downloaded version of this group.
           GroupKey downloadedGroupKey = groupKey.toBuilder().setDownloaded(true).build();
-          return Futures.transformAsync(
+          return transformSequentialAsync(
               fileGroupsMetadata.read(downloadedGroupKey),
               downloadedGroup -> {
                 boolean result =
                     (downloadedGroup == null)
                         ? false
                         : areSameGroup(dataFileGroup, downloadedGroup);
-                return Futures.immediateFuture(result);
-              },
-              sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+                return immediateFuture(result);
+              });
+        });
   }
 
   /**
@@ -2745,7 +2689,7 @@ public class FileGroupManager {
       GroupKey groupKey, DataFileGroupInternal receivedFileGroup) {
     // Search for a non-downloaded version of this group.
     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.read(pendingGroupKey),
         pendingGroup -> {
           // We will only set the GroupNewFilesReceivedTimestamp when either this is the first time
@@ -2765,9 +2709,8 @@ public class FileGroupManager {
           DataFileGroupInternal receivedFileGroupWithTimestamp =
               FileGroupUtil.setGroupNewFilesReceivedTimestamp(
                   receivedFileGroup, groupNewFilesReceivedTimestamp);
-          return Futures.immediateFuture(receivedFileGroupWithTimestamp);
-        },
-        sequentialControlExecutor);
+          return immediateFuture(receivedFileGroupWithTimestamp);
+        });
   }
 
   private boolean isAppInstalled(String packageName) {
@@ -2802,7 +2745,7 @@ public class FileGroupManager {
           DataFileGroupInternal dataFileGroup = groupKeyAndGroup.dataFileGroup();
 
           if (dataFileGroup == null) {
-            return Futures.immediateVoidFuture();
+            return immediateVoidFuture();
           }
 
           for (DataFile dataFile : dataFileGroup.getFileList()) {
@@ -2810,7 +2753,7 @@ public class FileGroupManager {
                 SharedFilesMetadata.createKeyFromDataFile(
                     dataFile, dataFileGroup.getAllowedReadersEnum());
             ListenableFuture<Void> unused =
-                Futures.catchingAsync(
+                PropagatedFutures.catchingAsync(
                     sharedFileManager.reVerifyFile(newFileKey, dataFile),
                     SharedFileMissingException.class,
                     e -> {
@@ -2818,16 +2761,15 @@ public class FileGroupManager {
                       logEventWithDataFileGroup(0, eventLogger, dataFileGroup);
 
                       if (flags.deleteFileGroupsWithFilesMissing()) {
-                        return Futures.transform(
+                        return transformSequentialAsync(
                             fileGroupsMetadata.remove(groupKeyAndGroup.groupKey()),
-                            ok -> null,
-                            sequentialControlExecutor);
+                            ok -> immediateVoidFuture());
                       }
-                      return Futures.immediateVoidFuture();
+                      return immediateVoidFuture();
                     },
                     sequentialControlExecutor);
           }
-          return Futures.immediateVoidFuture();
+          return immediateVoidFuture();
         });
   }
 
@@ -2850,14 +2792,14 @@ public class FileGroupManager {
           if (dataFileGroup == null
               || !groupKey.getDownloaded()
               || !FileGroupUtil.isIsolatedStructureAllowed(dataFileGroup)) {
-            return Futures.immediateVoidFuture();
+            return immediateVoidFuture();
           }
 
-          return Futures.transformAsync(
+          return transformSequentialAsync(
               maybeVerifyIsolatedStructure(dataFileGroup, /*isDownloaded=*/ true),
               verified -> {
                 if (!verified) {
-                  return FluentFuture.from(createIsolatedFilePaths(dataFileGroup))
+                  return PropagatedFluentFuture.from(createIsolatedFilePaths(dataFileGroup))
                       .catchingAsync(
                           DownloadException.class,
                           exception -> {
@@ -2872,8 +2814,7 @@ public class FileGroupManager {
                           sequentialControlExecutor);
                 }
                 return immediateVoidFuture();
-              },
-              sequentialControlExecutor);
+              });
         });
   }
 
@@ -2895,21 +2836,19 @@ public class FileGroupManager {
 
     List<ListenableFuture<Void>> allGroupsProcessed = new ArrayList<>();
 
-    return Futures.transformAsync(
+    return transformSequentialAsync(
         fileGroupsMetadata.getAllGroupKeys(),
         groupKeyList -> {
           for (GroupKey groupKey : groupKeyList) {
             allGroupsProcessed.add(
-                Futures.transformAsync(
+                transformSequentialAsync(
                     fileGroupsMetadata.read(groupKey),
                     dataFileGroup ->
-                        processGroup.apply(GroupKeyAndGroup.create(groupKey, dataFileGroup)),
-                    sequentialControlExecutor));
+                        processGroup.apply(GroupKeyAndGroup.create(groupKey, dataFileGroup))));
           }
-          return Futures.whenAllComplete(allGroupsProcessed)
+          return PropagatedFutures.whenAllComplete(allGroupsProcessed)
               .call(() -> null, sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+        });
   }
 
   /** Dumps the current internal state of the FileGroupManager. */
@@ -2917,7 +2856,7 @@ public class FileGroupManager {
     writer.println("==== MDD_FILE_GROUP_MANAGER ====");
     writer.println("MDD_FRESH_FILE_GROUPS:");
     ListenableFuture<Void> writeDataFileGroupsFuture =
-        Futures.transform(
+        transformSequentialAsync(
             fileGroupsMetadata.getAllFreshGroups(),
             dataFileGroups -> {
               ArrayList<Pair<GroupKey, DataFileGroupInternal>> sortedFileGroups =
@@ -2937,14 +2876,13 @@ public class FileGroupManager {
                     dataFileGroupPair.first.getAccount(),
                     dataFileGroupPair.second.toString());
               }
-              return null;
-            },
-            sequentialControlExecutor);
-    return Futures.transformAsync(
+              return immediateVoidFuture();
+            });
+    return transformSequentialAsync(
         writeDataFileGroupsFuture,
         voidParam -> {
           writer.println("MDD_STALE_FILE_GROUPS:");
-          return Futures.transformAsync(
+          return transformSequentialAsync(
               fileGroupsMetadata.getAllStaleGroups(),
               staleGroups -> {
                 for (DataFileGroupInternal fileGroup : staleGroups) {
@@ -2953,11 +2891,9 @@ public class FileGroupManager {
                       "GroupName: %s\nDataFileGroup:\n%s\n",
                       fileGroup.getGroupName(), fileGroup.toString());
                 }
-                return Futures.immediateVoidFuture();
-              },
-              sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+                return immediateVoidFuture();
+              });
+        });
   }
 
   /**
@@ -2994,5 +2930,15 @@ public class FileGroupManager {
         fileGroup.getFileGroupVersionNumber(),
         fileGroup.getBuildId(),
         fileGroup.getVariantId());
+  }
+
+  private <I, O> ListenableFuture<O> transformSequential(
+      ListenableFuture<I> input, Function<? super I, ? extends O> function) {
+    return PropagatedFutures.transform(input, function, sequentialControlExecutor);
+  }
+
+  private <I, O> ListenableFuture<O> transformSequentialAsync(
+      ListenableFuture<I> input, AsyncFunction<? super I, ? extends O> function) {
+    return PropagatedFutures.transformAsync(input, function, sequentialControlExecutor);
   }
 }

@@ -46,7 +46,9 @@ public final class LockScope {
 
   @Nullable private final ConcurrentMap<String, Semaphore> lockMap;
 
-  /** @deprecated Prefer the static {@link create()} factory method. */
+  /**
+   * @deprecated Prefer the static {@link create()} factory method.
+   */
   @Deprecated
   public LockScope() {
     this(new ConcurrentHashMap<>());
@@ -144,7 +146,9 @@ public final class LockScope {
       this.semaphore = null;
     }
 
-    /** @deprecated Prefer the single-argument {@code FileLockImpl(FileLock)}. */
+    /**
+     * @deprecated Prefer the single-argument {@code FileLockImpl(FileLock)}.
+     */
     @Deprecated
     public FileLockImpl(FileLock fileLock, Semaphore semaphore) {
       this.fileLock = fileLock;

@@ -34,7 +34,6 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
-        "@androidx_concurrent_concurrent",
         "@com_google_code_findbugs_jsr305",
         "@com_google_guava_guava",
         "@downloader",
@@ -48,21 +47,6 @@ android_library(
     ],
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
-        "@downloader",
-    ],
-)
-
-android_library(
-    name = "CronetExceptionHandler",
-    srcs = [
-        "CronetExceptionHandler.java",
-    ],
-    deps = [
-        ":ExceptionHandler",
-        "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
-        "@androidx_annotation_annotation",
-        "@com_google_guava_guava",
-        "@cronet-api",
         "@downloader",
     ],
 )

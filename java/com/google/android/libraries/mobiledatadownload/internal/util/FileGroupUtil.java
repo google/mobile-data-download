@@ -27,6 +27,7 @@ import com.google.common.base.Ascii;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableSet;
 import com.google.mobiledatadownload.TransformProto.Transform;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile.AndroidSharingType;
@@ -50,7 +51,9 @@ public class FileGroupUtil {
         : TimeUnit.SECONDS.toMillis(fileGroup.getExpirationDateSecs());
   }
 
-  /** @return the expiration date of this stale file group in millis */
+  /**
+   * @return the expiration date of this stale file group in millis
+   */
   public static long getStaleExpirationDateMillis(DataFileGroupInternal fileGroup) {
     return TimeUnit.SECONDS.toMillis(fileGroup.getBookkeeping().getStaleExpirationDate());
   }
@@ -253,13 +256,41 @@ public class FileGroupUtil {
   }
 
   public static boolean isSideloadedFile(DataFile dataFile) {
+    return isFileWithMatchingScheme(
+        dataFile,
+        ImmutableSet.of(
+            MddConstants.SIDELOAD_FILE_URL_SCHEME, MddConstants.EMBEDDED_ASSET_URL_SCHEME));
+  }
+
+  public static boolean isInlineFile(DataFile dataFile) {
+    return isFileWithMatchingScheme(dataFile, ImmutableSet.of(MddConstants.INLINE_FILE_URL_SCHEME));
+  }
+
+  // Helper method to test whether a DataFile's url scheme is contained in the given scheme set.
+  private static boolean isFileWithMatchingScheme(DataFile dataFile, ImmutableSet<String> schemes) {
     if (!dataFile.hasUrlToDownload()) {
       return false;
     }
     int colon = dataFile.getUrlToDownload().indexOf(':');
+    // TODO(b/196593240): Ensure this is always handled, or replace with a checked exception
     Preconditions.checkState(colon > -1, "Invalid url: %s", dataFile.getUrlToDownload());
-    String scheme = dataFile.getUrlToDownload().substring(0, colon);
-    return Ascii.equalsIgnoreCase(scheme, MddConstants.SIDELOAD_FILE_URL_SCHEME)
-        || Ascii.equalsIgnoreCase(scheme, MddConstants.EMBEDDED_ASSET_URL_SCHEME);
+    String fileScheme = dataFile.getUrlToDownload().substring(0, colon);
+    for (String scheme : schemes) {
+      if (Ascii.equalsIgnoreCase(fileScheme, scheme)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public static int getInlineFileCount(DataFileGroupInternal fileGroup) {
+    int inlineFileCount = 0;
+    for (DataFile file : fileGroup.getFileList()) {
+      if (isInlineFile(file)) {
+        inlineFileCount++;
+      }
+    }
+
+    return inlineFileCount;
   }
 }

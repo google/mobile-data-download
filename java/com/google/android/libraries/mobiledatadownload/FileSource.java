@@ -16,12 +16,12 @@
 package com.google.android.libraries.mobiledatadownload;
 
 import android.net.Uri;
-import com.google.auto.value.AutoOneOf;
 import com.google.protobuf.ByteString;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
 /** Either a URI or a ByteString. */
-@AutoOneOf(FileSource.Kind.class)
+// TODO(b/219765048) use AutoOneOf once that's available in Android
 @Immutable
 public abstract class FileSource {
   /** The possible types of source. */
@@ -37,13 +37,100 @@ public abstract class FileSource {
 
   public abstract Uri uri();
 
-  /** Create a FileSource from a URI. */
-  public static FileSource ofUri(Uri uri) {
-    return AutoOneOf_FileSource.uri(uri);
-  }
-
   /** Create a FileSource from a ByteString. */
   public static FileSource ofByteString(ByteString byteString) {
-    return AutoOneOf_FileSource.byteString(byteString);
+    if (byteString == null) {
+      throw new NullPointerException();
+    }
+    return new ImplByteString(byteString);
+  }
+
+  /** Create a FileSource from a URI. */
+  public static FileSource ofUri(Uri uri) {
+    if (uri == null) {
+      throw new NullPointerException();
+    }
+    return new ImplUri(uri);
+  }
+
+  // Parent class that each implementation will inherit from.
+  private abstract static class Parent extends FileSource {
+    @Override
+    public ByteString byteString() {
+      throw new UnsupportedOperationException(getKind().toString());
+    }
+
+    @Override
+    public Uri uri() {
+      throw new UnsupportedOperationException(getKind().toString());
+    }
+  }
+
+  // Implementation when the contained property is "byteString".
+  private static final class ImplByteString extends Parent {
+    private final ByteString byteString;
+
+    ImplByteString(ByteString byteString) {
+      this.byteString = byteString;
+    }
+
+    @Override
+    public ByteString byteString() {
+      return byteString;
+    }
+
+    @Override
+    public FileSource.Kind getKind() {
+      return FileSource.Kind.BYTESTRING;
+    }
+
+    @Override
+    public boolean equals(@Nullable Object x) {
+      if (x instanceof FileSource) {
+        FileSource that = (FileSource) x;
+        return this.getKind() == that.getKind() && this.byteString.equals(that.byteString());
+      } else {
+        return false;
+      }
+    }
+
+    @Override
+    public int hashCode() {
+      return byteString.hashCode();
+    }
+  }
+
+  // Implementation when the contained property is "uri".
+  private static final class ImplUri extends Parent {
+    private final Uri uri;
+
+    ImplUri(Uri uri) {
+      this.uri = uri;
+    }
+
+    @Override
+    public Uri uri() {
+      return uri;
+    }
+
+    @Override
+    public FileSource.Kind getKind() {
+      return FileSource.Kind.URI;
+    }
+
+    @Override
+    public boolean equals(@Nullable Object x) {
+      if (x instanceof FileSource) {
+        FileSource that = (FileSource) x;
+        return this.getKind() == that.getKind() && this.uri.equals(that.uri());
+      } else {
+        return false;
+      }
+    }
+
+    @Override
+    public int hashCode() {
+      return uri.hashCode();
+    }
   }
 }

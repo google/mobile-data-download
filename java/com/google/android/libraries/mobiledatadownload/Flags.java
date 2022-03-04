@@ -22,6 +22,7 @@ package com.google.android.libraries.mobiledatadownload;
  * unless noted otherwise.
  */
 public interface Flags {
+  // LINT.IfChange
 
   // FeatureFlags
   default boolean clearStateOnMddDisabled() {
@@ -165,7 +166,7 @@ public interface Flags {
   }
 
   default boolean enableDaysSinceLastMaintenanceTracking() {
-    return false;
+    return true;
   }
 
   default boolean enableSideloading() {
@@ -236,10 +237,6 @@ public interface Flags {
     return 100;
   }
 
-  default int pdsMigrationCompareResultsSampleInterval() {
-    return 10000;
-  }
-
   default int mobstoreFileServiceStatsSampleInterval() {
     return 100;
   }
@@ -280,4 +277,10 @@ public interface Flags {
   default int downloaderMaxThreads() {
     return 2;
   }
+
+  default int downloaderMaxRetryOnChecksumMismatchCount() {
+    return 5;
+  }
+
+  // LINT.ThenChange(<internal>)
 }

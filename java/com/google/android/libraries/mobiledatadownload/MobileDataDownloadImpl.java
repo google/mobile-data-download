@@ -240,6 +240,10 @@ class MobileDataDownloadImpl implements MobileDataDownload {
             groupKeyBuilder.setAccount(
                 AccountUtil.serialize(removeFileGroupRequest.accountOptional().get()));
           }
+          if (removeFileGroupRequest.variantIdOptional().isPresent()) {
+            groupKeyBuilder.setVariantId(removeFileGroupRequest.variantIdOptional().get());
+          }
+
           GroupKey groupKey = groupKeyBuilder.build();
           return Futures.transform(
               mobileDataDownloadManager.removeFileGroup(
@@ -639,6 +643,10 @@ class MobileDataDownloadImpl implements MobileDataDownload {
       groupKeyBuilder.setAccount(
           AccountUtil.serialize(downloadFileGroupRequest.accountOptional().get()));
     }
+    if (downloadFileGroupRequest.variantIdOptional().isPresent()) {
+      groupKeyBuilder.setVariantId(downloadFileGroupRequest.variantIdOptional().get());
+    }
+
     GroupKey groupKey = groupKeyBuilder.build();
 
     ListenableFuture<ClientFileGroup> downloadFuture =
@@ -767,6 +775,10 @@ class MobileDataDownloadImpl implements MobileDataDownload {
       groupKeyBuilder.setAccount(
           AccountUtil.serialize(downloadFileGroupRequest.accountOptional().get()));
     }
+    if (downloadFileGroupRequest.variantIdOptional().isPresent()) {
+      groupKeyBuilder.setVariantId(downloadFileGroupRequest.variantIdOptional().get());
+    }
+
     GroupKey groupKey = groupKeyBuilder.build();
 
     ListenableFuture<ClientFileGroup> downloadFuture =

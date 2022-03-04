@@ -17,6 +17,7 @@ package com.google.android.libraries.mobiledatadownload.internal.dagger;
 
 import com.google.android.libraries.mobiledatadownload.internal.MobileDataDownloadManager;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
+import com.google.android.libraries.mobiledatadownload.internal.logging.LoggingStateStore;
 import dagger.Component;
 import javax.inject.Singleton;
 
@@ -34,4 +35,7 @@ public abstract class StandaloneComponent {
   public abstract MobileDataDownloadManager getMobileDataDownloadManager();
 
   public abstract EventLogger getEventLogger();
+
+  // TODO(b/214632773): remove this when event logger can be constructed internally
+  public abstract LoggingStateStore getLoggingStateStore();
 }

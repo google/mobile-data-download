@@ -16,14 +16,16 @@
 package com.google.android.libraries.mobiledatadownload.internal.logging;
 
 import android.util.Pair;
-import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.internal.FileGroupManager;
 import com.google.android.libraries.mobiledatadownload.internal.FileGroupsMetadata;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executor;
 import javax.inject.Inject;
 
@@ -38,33 +40,31 @@ public class FileGroupStatsLogger {
   private final FileGroupsMetadata fileGroupsMetadata;
   private final EventLogger eventLogger;
   private final Executor sequentialControlExecutor;
-  private final Flags flags;
 
   @Inject
   public FileGroupStatsLogger(
       FileGroupManager fileGroupManager,
       FileGroupsMetadata fileGroupsMetadata,
       EventLogger eventLogger,
-      @SequentialControlExecutor Executor sequentialControlExecutor,
-      Flags flags) {
+      @SequentialControlExecutor Executor sequentialControlExecutor) {
     this.fileGroupManager = fileGroupManager;
     this.fileGroupsMetadata = fileGroupsMetadata;
     this.eventLogger = eventLogger;
     this.sequentialControlExecutor = sequentialControlExecutor;
-    this.flags = flags;
   }
 
   // TODO(b/73490689): Also log stats about stale groups.
   public ListenableFuture<Void> log(int daysSinceLastLog) {
-    // If the log is going to be sampled, don't bother going through the calculations.
-    int sampleInterval = flags.groupStatsLoggingSampleInterval();
-    if (!LogUtil.shouldSampleInterval(sampleInterval)) {
-      return Futures.immediateFuture(null);
-    }
-    return Futures.transformAsync(
+    return eventLogger.logMddFileGroupStats(() -> buildFileGroupStatusList(daysSinceLastLog));
+  }
+
+  private ListenableFuture<List<EventLogger.FileGroupStatusWithDetails>> buildFileGroupStatusList(
+      int daysSinceLastLog) {
+    return PropagatedFutures.transformAsync(
         fileGroupsMetadata.getAllFreshGroups(),
         downloadedAndPendingGroups -> {
-          ListenableFuture<Void> future = Futures.immediateFuture(null);
+          List<ListenableFuture<EventLogger.FileGroupStatusWithDetails>> futures =
+              new ArrayList<>();
           for (Pair<GroupKey, DataFileGroupInternal> pair : downloadedAndPendingGroups) {
             GroupKey groupKey = pair.first;
             DataFileGroupInternal dataFileGroup = pair.second;
@@ -74,27 +74,21 @@ public class FileGroupStatsLogger {
 
             Void fileGroupDetails = null;
 
-            future =
-                Futures.transformAsync(
-                    future,
-                    voidArg ->
-                        Futures.transform(
-                            setFileGroupStatus(dataFileGroup, groupKey, daysSinceLastLog),
-                            fileGroupStatus -> {
-                              eventLogger.logMddFileGroupStatsAfterSample(
-                                  fileGroupDetails, fileGroupStatus, sampleInterval);
-                              return null;
-                            },
-                            sequentialControlExecutor),
-                    sequentialControlExecutor);
+            futures.add(
+                PropagatedFutures.transform(
+                    buildFileGroupStatus(dataFileGroup, groupKey, daysSinceLastLog),
+                    fileGroupStatus ->
+                        EventLogger.FileGroupStatusWithDetails.create(
+                            fileGroupStatus, fileGroupDetails),
+                    sequentialControlExecutor));
           }
-          return future;
+          return Futures.allAsList(futures);
         },
         sequentialControlExecutor);
   }
 
-  private ListenableFuture<Void> setFileGroupStatus(
+  private ListenableFuture<Void> buildFileGroupStatus(
       DataFileGroupInternal dataFileGroup, GroupKey groupKey, int daysSinceLastLog) {
-    return Futures.immediateFuture(null);
+    return Futures.immediateVoidFuture();
   }
 }

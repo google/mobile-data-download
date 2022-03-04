@@ -40,6 +40,7 @@ android_library(
             "SingleFileDownloadRequest.java",
             "SingleFileDownloadListener.java",
             "FileSource.java",
+            "ExperimentationConfig.java",
         ],
     ),
     exports = [
@@ -87,6 +88,7 @@ android_library(
         ":Constants",
         ":DownloadException",
         ":DownloadListener",
+        ":ExperimentationConfig",
         ":Flags",
         ":Logger",
         ":SilentFeedback",
@@ -104,6 +106,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/internal/dagger:MainMddLibModule",
         "//java/com/google/android/libraries/mobiledatadownload/internal/dagger:StandaloneComponent",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:EventLogger",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogSampler",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:MddEventLogger",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:NoOpEventLogger",
@@ -203,7 +206,6 @@ android_library(
     name = "FileSource",
     srcs = ["FileSource.java"],
     deps = [
-        "@com_google_auto_value",
         "@com_google_code_findbugs_jsr305",
         "@com_google_protobuf//:protobuf_lite",
     ],
@@ -240,5 +242,14 @@ android_library(
     deps = [
         "//proto:client_config_java_proto_lite",
         "@com_google_auto_value",
+    ],
+)
+
+android_library(
+    name = "ExperimentationConfig",
+    srcs = ["ExperimentationConfig.java"],
+    deps = [
+        "@com_google_auto_value",
+        "@com_google_guava_guava",
     ],
 )

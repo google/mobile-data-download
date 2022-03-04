@@ -17,6 +17,7 @@ package com.google.android.libraries.mobiledatadownload.internal.dagger;
 
 import android.content.Context;
 import com.google.android.libraries.mobiledatadownload.AccountSource;
+import com.google.android.libraries.mobiledatadownload.ExperimentationConfig;
 import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.TimeSource;
@@ -28,6 +29,8 @@ import com.google.android.libraries.mobiledatadownload.internal.SharedFilesMetad
 import com.google.android.libraries.mobiledatadownload.internal.SharedPreferencesFileGroupsMetadata;
 import com.google.android.libraries.mobiledatadownload.internal.SharedPreferencesSharedFilesMetadata;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
+import com.google.android.libraries.mobiledatadownload.internal.experimentation.NoOpDownloadStageManager;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LoggingStateStore;
 import com.google.android.libraries.mobiledatadownload.internal.logging.NoOpLoggingState;
@@ -46,7 +49,7 @@ public class MainMddLibModule {
   /** The version of MDD library. Same as mdi_download module version. */
   // TODO(b/122271766): Figure out how to update this automatically.
   // LINT.IfChange
-  public static final int MDD_LIB_VERSION = 405966208;
+  public static final int MDD_LIB_VERSION = 422883838;
   // LINT.ThenChange(<internal>)
 
   private final SynchronousFileStorage fileStorage;
@@ -57,6 +60,7 @@ public class MainMddLibModule {
   private final Optional<String> instanceId;
   private final Optional<AccountSource> accountSourceOptional;
   private final Flags flags;
+  private final Optional<ExperimentationConfig> experimentationConfigOptional;
 
   public MainMddLibModule(
       SynchronousFileStorage fileStorage,
@@ -66,7 +70,8 @@ public class MainMddLibModule {
       Optional<SilentFeedback> silentFeedbackOptional,
       Optional<String> instanceId,
       Optional<AccountSource> accountSourceOptional,
-      Flags flags) {
+      Flags flags,
+      Optional<ExperimentationConfig> experimentationConfigOptional) {
     this.fileStorage = fileStorage;
     this.networkUsageMonitor = networkUsageMonitor;
     this.eventLogger = eventLogger;
@@ -75,6 +80,7 @@ public class MainMddLibModule {
     this.instanceId = instanceId;
     this.accountSourceOptional = accountSourceOptional;
     this.flags = flags;
+    this.experimentationConfigOptional = experimentationConfigOptional;
   }
 
   @Provides
@@ -155,6 +161,11 @@ public class MainMddLibModule {
   }
 
   @Provides
+  Optional<ExperimentationConfig> provideExperimentationConfigOptional() {
+    return this.experimentationConfigOptional;
+  }
+
+  @Provides
   @Singleton
   static FuturesUtil provideFuturesUtil(@SequentialControlExecutor Executor sequentialExecutor) {
     return new FuturesUtil(sequentialExecutor);
@@ -164,5 +175,14 @@ public class MainMddLibModule {
   @Singleton
   static LoggingStateStore provideLoggingStateStore() {
     return new NoOpLoggingState();
+  }
+
+  @Provides
+  static DownloadStageManager provideDownloadStageManager(
+      FileGroupsMetadata fileGroupsMetadata,
+      Optional<ExperimentationConfig> experimentationConfigOptional,
+      @SequentialControlExecutor Executor executor,
+      Flags flags) {
+    return new NoOpDownloadStageManager();
   }
 }

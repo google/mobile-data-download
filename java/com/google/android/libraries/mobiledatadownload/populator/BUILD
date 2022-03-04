@@ -42,23 +42,6 @@ android_library(
 )
 
 android_library(
-    name = "FilteringPopulator",
-    srcs = ["FilteringPopulator.java"],
-    deps = [
-        "//java/com/google/android/libraries/mobiledatadownload",
-        "//java/com/google/android/libraries/mobiledatadownload/file",
-        "//java/com/google/android/libraries/mobiledatadownload/file/openers:proto",
-        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
-        "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
-        "//proto:client_config_java_proto_lite",
-        "//proto:download_config_java_proto_lite",
-        "@androidx_core_core",
-        "@com_google_code_findbugs_jsr305",
-        "@com_google_guava_guava",
-    ],
-)
-
-android_library(
     name = "MigrationProxyPopulator",
     srcs = ["MigrationProxyPopulator.java"],
     deps = [
@@ -147,7 +130,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/populator/proto:metadata_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/tracing",
         "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
-        "//java/com/google/android/libraries/mobiledatadownload/proto:download_config_java_proto_lite",
+        "//proto:download_config_java_proto_lite",
         "@androidx_annotation_annotation",
         "@com_google_code_findbugs_jsr305",
         "@com_google_guava_guava",

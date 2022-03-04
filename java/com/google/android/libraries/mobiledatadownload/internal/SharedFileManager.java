@@ -26,6 +26,7 @@ import androidx.annotation.VisibleForTesting;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.FileSource;
+import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.delta.DeltaDecoder;
@@ -108,6 +109,7 @@ public class SharedFileManager {
   private final Optional<DeltaDecoder> deltaDecoderOptional;
   private final Optional<DownloadProgressMonitor> downloadMonitorOptional;
   private final EventLogger eventLogger;
+  private final Flags flags;
   private final FileGroupsMetadata fileGroupsMetadata;
   private final Optional<String> instanceId;
   private final Executor sequentialControlExecutor;
@@ -122,6 +124,7 @@ public class SharedFileManager {
       Optional<DeltaDecoder> deltaDecoderOptional,
       Optional<DownloadProgressMonitor> downloadMonitorOptional,
       EventLogger eventLogger,
+      Flags flags,
       FileGroupsMetadata fileGroupsMetadata,
       @InstanceId Optional<String> instanceId,
       @SequentialControlExecutor Executor sequentialControlExecutor) {
@@ -133,6 +136,7 @@ public class SharedFileManager {
     this.deltaDecoderOptional = deltaDecoderOptional;
     this.downloadMonitorOptional = downloadMonitorOptional;
     this.eventLogger = eventLogger;
+    this.flags = flags;
     this.fileGroupsMetadata = fileGroupsMetadata;
     this.instanceId = instanceId;
     this.sequentialControlExecutor = sequentialControlExecutor;
@@ -335,6 +339,7 @@ public class SharedFileManager {
                       fileGroupVersionNumber,
                       buildId,
                       variantId,
+                      flags,
                       sequentialControlExecutor);
               // TODO: when partial import files are supported, notify monitor of partial
               // progress here.
@@ -491,6 +496,7 @@ public class SharedFileManager {
                         fileGroupVersionNumber,
                         buildId,
                         variantId,
+                        flags,
                         sequentialControlExecutor);
 
                 mayNotifyCurrentSizeOfPartiallyDownloadedFile(groupKey, downloadFileOnDeviceUri);
@@ -524,6 +530,7 @@ public class SharedFileManager {
                         buildId,
                         variantId,
                         instanceId,
+                        flags,
                         sequentialControlExecutor);
 
                 mayNotifyCurrentSizeOfPartiallyDownloadedFile(groupKey, downloadFileOnDeviceUri);

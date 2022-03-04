@@ -22,10 +22,9 @@ import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import android.content.Context;
 import android.net.Uri;
 import androidx.annotation.VisibleForTesting;
+import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
+import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping.Status;
 import com.google.android.libraries.mobiledatadownload.AggregateException;
-import com.google.android.libraries.mdi.download.DataDownloadProto.DataFileGroup;
-import com.google.android.libraries.mdi.download.DataDownloadProto.ManifestConfig;
-import com.google.android.libraries.mdi.download.DataDownloadProto.ManifestFileFlag;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.FileGroupPopulator;
@@ -50,13 +49,14 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ExecutionSequencer;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
+import com.google.mobiledatadownload.DownloadConfigProto.ManifestConfig;
+import com.google.mobiledatadownload.DownloadConfigProto.ManifestFileFlag;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.inject.Singleton;
-import mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
-import mdi.download.populator.MetadataProto.ManifestFileBookkeeping.Status;
 
 /**
  * File group populator that gets {@link ManifestFileFlag} from the caller, downloads the
@@ -89,7 +89,7 @@ import mdi.download.populator.MetadataProto.ManifestFileBookkeeping.Status;
  *
  * <p>Note that the current prerequisite of using {@link ManifestFileGroupPopulator} is that, the
  * hosting service needs to support ETag (e.g. Lorry), otherwise the behavior will be unexpected.
- * Talk to mdd-eng@ if you are not sure if the hosting service supports ETag.
+ * Talk to <internal>@ if you are not sure if the hosting service supports ETag.
  *
  * <p>Note that {@link SynchronousFileStorage} and {@link ProtoDataStoreFactory} passed to builder
  * must be @Singleton.

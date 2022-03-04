@@ -15,10 +15,16 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.downloader;
 
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
+
 import android.content.Context;
 import android.net.Uri;
+import android.os.Build.VERSION;
+import android.os.Build.VERSION_CODES;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
+import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.delta.DeltaDecoder;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
@@ -27,9 +33,10 @@ import com.google.android.libraries.mobiledatadownload.internal.downloader.MddFi
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Ascii;
 import com.google.common.base.Optional;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
@@ -61,6 +68,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
   private final long buildId;
   private final String variantId;
   private final Optional<String> instanceId;
+  private final Flags flags;
   private final Executor sequentialControlExecutor;
 
   public DeltaFileDownloaderCallbackImpl(
@@ -78,6 +86,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
       long buildId,
       String variantId,
       Optional<String> instanceId,
+      Flags flags,
       Executor sequentialControlExecutor) {
     this.context = context;
     this.sharedFilesMetadata = sharedFilesMetadata;
@@ -93,6 +102,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
     this.buildId = buildId;
     this.variantId = variantId;
     this.instanceId = instanceId;
+    this.flags = flags;
     this.sequentialControlExecutor = sequentialControlExecutor;
   }
 
@@ -104,21 +114,46 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
       LogUtil.e(
           "%s: Downloaded delta file at uri = %s, checksum = %s verification failed",
           TAG, deltaFileUri, deltaFile.getChecksum());
-      return Futures.immediateFailedFuture(
+      DownloadException exception =
           DownloadException.builder()
               .setDownloadResultCode(DownloadResultCode.DOWNLOADED_FILE_CHECKSUM_MISMATCH_ERROR)
-              .build());
+              .build();
+      // File was downloaded successfully, but failed checksum mismatch error. This indicates a
+      // corrupted file that should be deleted so MDD can attempt to redownload from scratch.
+      return PropagatedFluentFuture.from(
+              DownloaderCallbackImpl.maybeDeleteFileOnChecksumMismatch(
+                  sharedFilesMetadata,
+                  dataFile,
+                  allowedReaders,
+                  fileStorage,
+                  deltaFileUri,
+                  deltaFile.getChecksum(),
+                  eventLogger,
+                  flags,
+                  sequentialControlExecutor))
+          .catchingAsync(
+              IOException.class,
+              ioException -> {
+                // Delete on checksum failed, add it as a suppressed exception if supported (API
+                // level 19 or higher).
+                if (VERSION.SDK_INT >= VERSION_CODES.KITKAT) {
+                  exception.addSuppressed(ioException);
+                }
+                return immediateVoidFuture();
+              },
+              sequentialControlExecutor)
+          .transformAsync(unused -> immediateFailedFuture(exception), sequentialControlExecutor);
     }
 
     Uri fullFileUri = FileNameUtil.getFinalFileUriWithTempDownloadedFile(deltaFileUri);
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         handleDeltaDownloadFile(fullFileUri, deltaFileUri),
         voidArg -> {
           // TODO(b/149260496): once DeltaDownloader supports shared files, which have ChecksumType
           // == SHA256, change from DataFile.ChecksumType.DFEFAULT to dataFile.getChecksumType().
           if (!FileValidator.verifyChecksum(fileStorage, fullFileUri, dataFile.getChecksum())) {
             LogUtil.e("%s: Final file checksum verification failed. %s.", TAG, fullFileUri);
-            return Futures.immediateFailedFuture(
+            return immediateFailedFuture(
                 DownloadException.builder()
                     .setDownloadResultCode(DownloadResultCode.FINAL_FILE_CHECKSUM_MISMATCH_ERROR)
                     .build());
@@ -135,8 +170,18 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
   }
 
   @Override
-  public ListenableFuture<Void> onDownloadFailed() {
+  public ListenableFuture<Void> onDownloadFailed(DownloadException exception) {
     LogUtil.d("%s: Failed to download file(delta) %s", TAG, dataFile.getChecksum());
+    if (exception
+        .getDownloadResultCode()
+        .equals(DownloadResultCode.DOWNLOADED_FILE_CHECKSUM_MISMATCH_ERROR)) {
+      return DownloaderCallbackImpl.updateFileStatus(
+          FileStatus.CORRUPTED,
+          dataFile,
+          allowedReaders,
+          sharedFilesMetadata,
+          sequentialControlExecutor);
+    }
     return DownloaderCallbackImpl.updateFileStatus(
         FileStatus.DOWNLOAD_FAILED,
         dataFile,
@@ -151,7 +196,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
             .setChecksum(deltaFile.getBaseFile().getChecksum())
             .setAllowedReaders(allowedReaders)
             .build();
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.read(baseFileKey),
         baseFileMetadata -> {
           Uri baseFileUri = null;
@@ -169,7 +214,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
           }
 
           if (baseFileUri == null) {
-            return Futures.immediateFailedFuture(
+            return immediateFailedFuture(
                 DownloadException.builder()
                     .setDownloadResultCode(
                         DownloadResultCode.DELTA_DOWNLOAD_BASE_FILE_NOT_FOUND_ERROR)
@@ -186,7 +231,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
                 deltaFile.getUrlToDownload(),
                 dataFile.getChecksum());
             silentFeedback.send(e, "Failed to decode delta file.");
-            return Futures.immediateFailedFuture(
+            return immediateFailedFuture(
                 DownloadException.builder()
                     .setDownloadResultCode(DownloadResultCode.DELTA_DOWNLOAD_DECODE_IO_ERROR)
                     .setCause(e)
@@ -200,7 +245,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
               deltaFile.getByteSize(),
               dataFile.getFileId(),
               getDeltaFileIndex());
-          return Futures.immediateFuture(null);
+          return immediateVoidFuture();
         },
         sequentialControlExecutor);
   }

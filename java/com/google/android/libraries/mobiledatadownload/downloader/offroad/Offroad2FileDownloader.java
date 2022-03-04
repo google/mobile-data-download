@@ -35,6 +35,7 @@ import com.google.android.libraries.mobiledatadownload.file.integration.download
 import com.google.android.libraries.mobiledatadownload.file.integration.downloader.DownloadMetadataStore;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.base.Strings;
 import com.google.common.util.concurrent.FluentFuture;
@@ -116,12 +117,21 @@ public final class Offroad2FileDownloader implements FileDownloader {
               return Futures.immediateFailedFuture(exception);
             },
             downloadExecutor)
-        .transform(
+        .transformAsync(
             (DownloadResult result) -> {
               LogUtil.d(
                   "%s: Downloaded file %s, bytes written: %d",
                   TAG, fileName, result.bytesWritten());
-              return null;
+              return PropagatedFutures.catchingAsync(
+                  downloadMetadataStore.delete(fileDownloaderRequest.fileUri()),
+                  Exception.class,
+                  e -> {
+                    // Failing to clean up metadata shouldn't cause a failure in the future, log and
+                    // return void.
+                    LogUtil.d(e, "%s: Failed to cleanup metadata", TAG);
+                    return Futures.immediateVoidFuture();
+                  },
+                  downloadExecutor);
             },
             downloadExecutor);
   }

@@ -15,9 +15,9 @@
  */
 package com.google.android.libraries.mobiledatadownload.populator;
 
+import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
-import mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
 
 /** Storage mechanism for ManifestFileBookkeeping. */
 interface ManifestFileMetadataStore {

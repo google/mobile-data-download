@@ -40,6 +40,8 @@ public abstract class DownloadFileGroupRequest {
 
   public abstract Optional<Account> accountOptional();
 
+  public abstract Optional<String> variantIdOptional();
+
   /**
    * If present, title text to display in notification when using foreground downloads. Otherwise,
    * the file group name will be used.
@@ -97,6 +99,20 @@ public abstract class DownloadFileGroupRequest {
     /** Sets the optional account that is associated to the file group. */
     public abstract Builder setAccountOptional(Optional<Account> accountOptional);
 
+    /**
+     * Sets the variant id that is associated to the file group.
+     *
+     * <p>This parameter is only required to download a group that was added to MDD with a variantId
+     * specified (see {@link AddFileGroupRequest.Builder#setVariantIdOptional}).
+     *
+     * <p>If a variantId was specified when adding the group to MDD and is not included here, the
+     * request will fail with a {@link DownloadException} and a GROUP_NOT_FOUND result code.
+     *
+     * <p>Similarly, if a variantId was <em>not</em> specified when adding the group to MDD and
+     * <em>is</em> included here, the request will also fail with the same exception.
+     */
+    public abstract Builder setVariantIdOptional(Optional<String> variantIdOptional);
+
     /** Sets the optional title text for a notification when using foreground downloads. */
     public abstract Builder setContentTitleOptional(Optional<String> contentTitleOptional);
 
@@ -110,19 +126,23 @@ public abstract class DownloadFileGroupRequest {
     public abstract Builder setDownloadConditionsOptional(
         Optional<DownloadConditions> downloadConditionsOptional);
 
-    /** Sets the optional download listener. If present, will receive download progress update. */
+    /**
+     * Sets the optional download listener when using foreground downloads. If present, will receive
+     * download progress update.
+     */
     public abstract Builder setListenerOptional(Optional<DownloadListener> listenerOptional);
 
     /**
-     * Sets size of the being downloaded group in bytes. This is used to display the progressbar. If
-     * not specified, a indeterminate progressbar will be displayed.
+     * Sets size of the being downloaded group in bytes when using foreground downloads. This is
+     * used to display the progressbar. If not specified, a indeterminate progressbar will be
+     * displayed.
      * https://developer.android.com/reference/android/app/Notification.Builder.html#setProgress(int,%20int,%20boolean)
      */
     public abstract Builder setGroupSizeBytes(int groupSizeBytes);
 
     /**
-     * Controls if notifications should be created for this download request. This option is only
-     * used when performing foreground downloads. Defaults to true.
+     * Controls if notifications should be created for this download request when using foreground
+     * downloads. Defaults to true.
      */
     public abstract Builder setShowNotifications(ShowNotifications notifications);
 

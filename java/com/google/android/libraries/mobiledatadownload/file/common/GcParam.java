@@ -36,12 +36,16 @@ public final class GcParam {
     this.date = date;
   }
 
-  /** @return A GcParam for expiration at the given date. */
+  /**
+   * @return A GcParam for expiration at the given date.
+   */
   public static GcParam expiresAt(Date date) {
     return new GcParam(Code.EXPIRES_AT, date);
   }
 
-  /** @return the "none" GcParam. */
+  /**
+   * @return the "none" GcParam.
+   */
   public static GcParam none() {
     return NONE_PARAM;
   }
@@ -57,12 +61,16 @@ public final class GcParam {
     return date;
   }
 
-  /** @return whether {@code this} is an expiration GcParam */
+  /**
+   * @return whether {@code this} is an expiration GcParam
+   */
   public boolean isExpiresAt() {
     return code == Code.EXPIRES_AT;
   }
 
-  /** @return whether {@code this} is the none GcParam */
+  /**
+   * @return whether {@code this} is the none GcParam
+   */
   public boolean isNone() {
     return code == Code.NONE;
   }

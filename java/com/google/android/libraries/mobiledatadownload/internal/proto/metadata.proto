@@ -538,6 +538,13 @@ message SharedFile {
   // Checksum used to access files through the Android Blob Sharing Service.
   optional string android_sharing_checksum = 10;
 
+  // If the file is downloaded successfully but fails checksum matching, we will
+  // attempt to delete the file so it can be redownloaded from scratch. To
+  // prevent unnecessary network bandwidth, we keep track of the number of these
+  // attempts in this field and stop after a certain number. (configurable by a
+  // download flag).
+  optional int32 checksum_mismatch_retry_download_count = 11;
+
   reserved 1, 2, 3, 6, 7;
 }
 

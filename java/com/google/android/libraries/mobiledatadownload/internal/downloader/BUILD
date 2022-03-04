@@ -74,6 +74,7 @@ android_library(
         ":FileValidator",
         ":ZipFolderOpener",
         "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:recursive_size",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
@@ -83,6 +84,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/internal/util:FileGroupUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "@androidx_annotation_annotation",
         "@com_google_guava_guava",
     ],
@@ -106,6 +108,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/internal/util:DirectoryUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "@com_google_guava_guava",
     ],
 )

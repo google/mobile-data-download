@@ -27,6 +27,7 @@ import com.google.android.libraries.mobiledatadownload.internal.dagger.Executors
 import com.google.android.libraries.mobiledatadownload.internal.dagger.MainMddLibModule;
 import com.google.android.libraries.mobiledatadownload.internal.dagger.StandaloneComponent;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
+import com.google.android.libraries.mobiledatadownload.internal.logging.LogSampler;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.logging.MddEventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.NoOpEventLogger;
@@ -42,6 +43,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -77,6 +79,7 @@ public final class MobileDataDownloadBuilder {
   private Optional<AccountSource> accountSourceOptional = Optional.absent();
   private boolean useDefaultAccountSource = true;
   private Optional<CustomFileGroupValidator> customFileGroupValidatorOptional = Optional.absent();
+  private Optional<ExperimentationConfig> experimentationConfigOptional = Optional.absent();
 
   public static MobileDataDownloadBuilder newBuilder() {
     return new MobileDataDownloadBuilder();
@@ -255,6 +258,17 @@ public final class MobileDataDownloadBuilder {
     return this;
   }
 
+  /**
+   * Sets the ExperimentationConfig that's used when propagating experiment ids to external log
+   * sources. If this is not called, experiment ids are not propagated. See <internal> for more
+   * details.
+   */
+  public MobileDataDownloadBuilder setExperimentationConfigOptional(
+      Optional<ExperimentationConfig> experimentationConfigOptional) {
+    this.experimentationConfigOptional = experimentationConfigOptional;
+    return this;
+  }
+
   // We use java.util.concurrent.Executor directly to create default Control Executor and
   // Download Executor.
   public MobileDataDownload build() {
@@ -306,7 +320,12 @@ public final class MobileDataDownloadBuilder {
     final EventLogger eventLogger;
     if (loggerOptional.isPresent()) {
       eventLogger =
-          new MddEventLogger(context, loggerOptional.get(), Constants.MDD_LIB_VERSION, flags);
+          new MddEventLogger(
+              context,
+              loggerOptional.get(),
+              Constants.MDD_LIB_VERSION,
+              new LogSampler(flags, new SecureRandom()),
+              flags);
     } else {
       eventLogger = new NoOpEventLogger();
     }
@@ -324,9 +343,14 @@ public final class MobileDataDownloadBuilder {
             silentFeedbackOptional,
             instanceIdOptional,
             accountSourceOptional,
-            flags));
+            flags,
+            experimentationConfigOptional));
 
     StandaloneComponent component = componentBuilder.build();
+
+    if (eventLogger instanceof MddEventLogger) {
+      ((MddEventLogger) eventLogger).setLoggingStateStore(component.getLoggingStateStore());
+    }
 
     Downloader.Builder singleFileDownloaderBuilder =
         Downloader.newBuilder()

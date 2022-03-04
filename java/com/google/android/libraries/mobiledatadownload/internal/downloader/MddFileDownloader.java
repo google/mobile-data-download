@@ -177,7 +177,7 @@ public class MddFileDownloader {
                 DownloadException.class,
                 e ->
                     Futures.transformAsync(
-                        callback.onDownloadFailed(),
+                        callback.onDownloadFailed(e),
                         voidArg -> {
                           throw e;
                         },
@@ -428,6 +428,6 @@ public class MddFileDownloader {
     ListenableFuture<Void> onDownloadComplete(Uri fileUri);
 
     /** Called on download failed. */
-    ListenableFuture<Void> onDownloadFailed();
+    ListenableFuture<Void> onDownloadFailed(DownloadException exception);
   }
 }

@@ -34,6 +34,7 @@ import com.google.android.libraries.mobiledatadownload.file.transforms.Transform
 import com.google.android.libraries.mobiledatadownload.internal.FileGroupManager.GroupDownloadStatus;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
 import com.google.android.libraries.mobiledatadownload.internal.downloader.FileValidator;
+import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.FileGroupStatsLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
@@ -113,6 +114,7 @@ public class MobileDataDownloadManager {
   private final Executor sequentialControlExecutor;
   private final Flags flags;
   private final LoggingStateStore loggingStateStore;
+  private final DownloadStageManager downloadStageManager;
 
   @Inject
   // TODO: Create a delegateLogger for all logging instead of adding separate logger for
@@ -132,7 +134,8 @@ public class MobileDataDownloadManager {
       @InstanceId Optional<String> instanceId,
       @SequentialControlExecutor Executor sequentialControlExecutor,
       Flags flags,
-      LoggingStateStore loggingStateStore) {
+      LoggingStateStore loggingStateStore,
+      DownloadStageManager downloadStageManager) {
     this.context = context;
     this.eventLogger = eventLogger;
     this.sharedFileManager = sharedFileManager;
@@ -148,6 +151,7 @@ public class MobileDataDownloadManager {
     this.sequentialControlExecutor = sequentialControlExecutor;
     this.flags = flags;
     this.loggingStateStore = loggingStateStore;
+    this.downloadStageManager = downloadStageManager;
   }
 
   /**
@@ -647,7 +651,10 @@ public class MobileDataDownloadManager {
     LogUtil.d("%s Clearing MDD internal storage", TAG);
 
     // Delete all of the bookkeeping files used by MDD Manager's internal classes.
-    return PropagatedFluentFuture.from(clearAllFilesAndMetadata())
+    // Clear downloadStageManager first since it needs to know which builds to delete from
+    // SharedFilesMetadata.
+    return PropagatedFluentFuture.from(downloadStageManager.clearAll())
+        .transformAsync(voidArg -> clearAllFilesAndMetadata(), sequentialControlExecutor)
         .transformAsync(
             voidArg -> {
               // Clear all migration status.
@@ -756,7 +763,7 @@ public class MobileDataDownloadManager {
   /**
    * Gets and resets the number of days since last maintenance from {@link loggingStateStore}. If
    * loggingStateStore fails to provide a value (if it throws an exception or the value was not set)
-   * this handles that by returning -1.
+   * this handles that by returning -1. clear
    *
    * <p>If {@link Flags.enableDaysSinceLastMaintenanceTracking} is not enabled, this returns -1.
    */
