@@ -17,7 +17,7 @@ package com.google.android.libraries.mobiledatadownload.populator;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
+import com.google.mobiledatadownload.populator.MetadataProto.ManifestFileBookkeeping;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedPreferencesUtil;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;

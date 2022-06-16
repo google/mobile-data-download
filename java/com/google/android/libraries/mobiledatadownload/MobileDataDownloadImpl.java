@@ -73,13 +73,11 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import javax.annotation.Nullable;
-
 /**
  * Default implementation for {@link
  * com.google.android.libraries.mobiledatadownload.MobileDataDownload}.
  */
 class MobileDataDownloadImpl implements MobileDataDownload {
-
   private static final String TAG = "MobileDataDownload";
   private static final long DUMP_DEBUG_INFO_TIMEOUT = 3;
 

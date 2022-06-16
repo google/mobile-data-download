@@ -17,7 +17,7 @@ package com.google.android.libraries.mdi.download;
 
 import "google/protobuf/any.proto";
 
-option jspb_use_correct_proto2_semantics = false;  // <internal>
+//option jspb_use_correct_proto2_semantics = false;  // <internal> TODO
 option java_package = "com.google.mobiledatadownload";
 option java_outer_classname = "ClientConfigProto";
 option objc_class_prefix = "ICN";
