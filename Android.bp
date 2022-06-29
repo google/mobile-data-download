@@ -62,7 +62,6 @@ android_library {
         "auto_value_annotations",
         "framework-annotations-lib",
         "unsupportedappusage",
-        "framework-adservices",
         "android_checker_annotation_stubs",
     ],
     plugins: [
