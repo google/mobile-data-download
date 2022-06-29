@@ -1,0 +1,13 @@
+name: "Mobile Data Download"
+description:
+    "Android library for downloading and managing files on device."
+
+third_party {
+  url {
+    type: GIT
+    value: "https://github.com/google/mobile-data-download"
+  }
+  version: "1.0"
+  last_upgrade_date { year: 2022 month: 6 day: 15 }
+  license_type: NOTICE
+}

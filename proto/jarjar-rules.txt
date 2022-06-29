@@ -1,0 +1,3 @@
+
+# Use our statically linked protobuf library
+# rule com.google.protobuf.** com.android.adservices.protobuf.@1

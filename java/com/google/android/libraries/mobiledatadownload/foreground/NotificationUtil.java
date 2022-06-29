@@ -46,7 +46,7 @@ public final class NotificationUtil {
       Context context) {
     return getNotificationBuilder(context)
         .setContentTitle(
-            context.getResources().getString(R.string.mdd_foreground_service_notification_title))
+                "Downloading")
         .setSmallIcon(android.R.drawable.stat_notify_sync_noanim);
   }
 
@@ -116,7 +116,7 @@ public final class NotificationUtil {
     NotificationCompat.Action action =
         new NotificationCompat.Action.Builder(
                 android.R.drawable.stat_sys_warning,
-                context.getResources().getString(R.string.mdd_notification_action_cancel),
+                "Cancel",
                 Preconditions.checkNotNull(pendingCancelIntent))
             .build();
     notification.addAction(action);
@@ -154,17 +154,17 @@ public final class NotificationUtil {
    * network connection.
    */
   public static String getDownloadPausedMessage(Context context) {
-    return context.getResources().getString(R.string.mdd_notification_download_paused);
+    return "Waiting for network connection";
   }
 
   /** Return the String message to display in Notification when the download is failed. */
   public static String getDownloadFailedMessage(Context context) {
-    return context.getResources().getString(R.string.mdd_notification_download_failed);
+    return "Download failed";
   }
 
   /** Return the String message to display in Notification when the download is success. */
   public static String getDownloadSuccessMessage(Context context) {
-    return context.getResources().getString(R.string.mdd_notification_download_success);
+    return "Downloaded";
   }
 
   /** Create the Notification Channel for Downloading. */
@@ -173,7 +173,7 @@ public final class NotificationUtil {
       NotificationChannel notificationChannel =
           new NotificationChannel(
               NOTIFICATION_CHANNEL_ID,
-              context.getResources().getString(R.string.mdd_download_notification_channel_name),
+                  "Data Download Notification Channel",
               android.app.NotificationManager.IMPORTANCE_DEFAULT);
 
       android.app.NotificationManager manager =
