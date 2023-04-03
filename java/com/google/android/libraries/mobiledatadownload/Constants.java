@@ -36,7 +36,7 @@ public final class Constants {
   /** The version of MDD library. Same as mdi_download module version. */
   // TODO(b/122271766): Figure out how to update this automatically.
   // LINT.IfChange
-  public static final int MDD_LIB_VERSION = 422883838;
+  public static final int MDD_LIB_VERSION = 516938429;
   // LINT.ThenChange(<internal>)
 
   // <internal>

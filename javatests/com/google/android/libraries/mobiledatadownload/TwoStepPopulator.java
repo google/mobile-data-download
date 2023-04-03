@@ -30,7 +30,6 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
-import com.google.mobiledatadownload.DownloadConfigProto.DataFile.ChecksumType;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions.DeviceNetworkPolicy;
 import java.io.IOException;
@@ -76,13 +75,12 @@ public class TwoStepPopulator implements FileGroupPopulator {
 
               // Add a file group where the url is read from step1.txt
               DataFileGroup step2FileGroup =
-                  MobileDataDownloadIntegrationTest.createDataFileGroup(
+                  TestFileGroupPopulator.createDataFileGroup(
                       "step2-file-group",
                       context.getPackageName(),
                       new String[] {"step2_id"},
                       new int[] {13},
                       new String[] {""},
-                      new ChecksumType[] {ChecksumType.NONE},
                       new String[] {step1Content},
                       DeviceNetworkPolicy.DOWNLOAD_ON_ANY_NETWORK);
 

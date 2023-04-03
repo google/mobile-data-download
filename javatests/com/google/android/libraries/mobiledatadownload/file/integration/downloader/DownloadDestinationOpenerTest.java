@@ -61,9 +61,9 @@ public final class DownloadDestinationOpenerTest {
 
   @Rule public TemporaryUri tmpUri = new TemporaryUri();
 
-  /* Run the same test suite on multiple implementations of the same interface. */
+  /* Run the same test suite on two implementations of the same interface. */
   private enum Implementation {
-    SHARED_PREFERENCES
+    SHARED_PREFERENCES,
   }
 
   @Parameters(name = "implementation={0}")
@@ -89,12 +89,12 @@ public final class DownloadDestinationOpenerTest {
 
     // Create destination.
     DownloadMetadataStore store = createMetadataStore();
-    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store);
+    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store, EXECUTOR_SERVICE);
     DownloadDestination destination = storage.open(fileUri, opener);
 
     // Asset that destination has initial, empty values.
-    assertThat(destination.numExistingBytes()).isEqualTo(0);
-    assertThat(destination.readMetadata()).isEqualTo(emptyMetadata);
+    assertThat(destination.numExistingBytes().get(TIMEOUT, SECONDS)).isEqualTo(0);
+    assertThat(destination.readMetadata().get(TIMEOUT, SECONDS)).isEqualTo(emptyMetadata);
   }
 
   @Test
@@ -110,10 +110,11 @@ public final class DownloadDestinationOpenerTest {
 
     // Create destination and write data/metadata.
     DownloadMetadataStore store = createMetadataStore();
-    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store);
+    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store, EXECUTOR_SERVICE);
     DownloadDestination destination = storage.open(fileUri, opener);
 
-    try (WritableByteChannel writeChannel = destination.openByteChannel(0, metadataToWrite)) {
+    try (WritableByteChannel writeChannel =
+        destination.openByteChannel(0, metadataToWrite).get(TIMEOUT, SECONDS)) {
       writeChannel.write(buffer);
     }
 
@@ -125,8 +126,8 @@ public final class DownloadDestinationOpenerTest {
     assertThat(readContent).isEqualTo(CONTENT);
 
     // Assert that destination now reflects the latest state.
-    assertThat(destination.numExistingBytes()).isEqualTo(CONTENT.length);
-    assertThat(destination.readMetadata()).isEqualTo(metadataToWrite);
+    assertThat(destination.numExistingBytes().get(TIMEOUT, SECONDS)).isEqualTo(CONTENT.length);
+    assertThat(destination.readMetadata().get(TIMEOUT, SECONDS)).isEqualTo(metadataToWrite);
   }
 
   @Test
@@ -142,12 +143,12 @@ public final class DownloadDestinationOpenerTest {
 
     // Create destination.
     DownloadMetadataStore store = createMetadataStore();
-    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store);
+    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store, EXECUTOR_SERVICE);
     DownloadDestination destination = storage.open(fileUri, opener);
 
     // Assert that destination now reflects the latest state.
-    assertThat(destination.numExistingBytes()).isEqualTo(CONTENT.length);
-    assertThat(destination.readMetadata()).isEqualTo(expectedMetadata);
+    assertThat(destination.numExistingBytes().get(TIMEOUT, SECONDS)).isEqualTo(CONTENT.length);
+    assertThat(destination.readMetadata().get(TIMEOUT, SECONDS)).isEqualTo(expectedMetadata);
   }
 
   @Test
@@ -170,11 +171,13 @@ public final class DownloadDestinationOpenerTest {
 
     // Create destination and write data/metadata.
     DownloadMetadataStore store = createMetadataStore();
-    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store);
+    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store, EXECUTOR_SERVICE);
     DownloadDestination destination = storage.open(fileUri, opener);
 
     try (WritableByteChannel writeChannel =
-        destination.openByteChannel(destination.numExistingBytes(), metadataToWrite)) {
+        destination
+            .openByteChannel(destination.numExistingBytes().get(TIMEOUT, SECONDS), metadataToWrite)
+            .get(TIMEOUT, SECONDS)) {
       writeChannel.write(buffer);
     }
 
@@ -185,8 +188,9 @@ public final class DownloadDestinationOpenerTest {
     assertThat(readContent).isEqualTo(expectedContent);
 
     // Assert that destination now reflects the latest state.
-    assertThat(destination.numExistingBytes()).isEqualTo(expectedContent.length);
-    assertThat(destination.readMetadata()).isEqualTo(metadataToWrite);
+    assertThat(destination.numExistingBytes().get(TIMEOUT, SECONDS))
+        .isEqualTo(expectedContent.length);
+    assertThat(destination.readMetadata().get(TIMEOUT, SECONDS)).isEqualTo(metadataToWrite);
   }
 
   @Test
@@ -201,14 +205,14 @@ public final class DownloadDestinationOpenerTest {
 
     // Create destination and clear.
     DownloadMetadataStore store = createMetadataStore();
-    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store);
+    DownloadDestinationOpener opener = DownloadDestinationOpener.create(store, EXECUTOR_SERVICE);
     DownloadDestination destination = storage.open(fileUri, opener);
 
-    destination.clear();
+    destination.clear().get(TIMEOUT, SECONDS);
 
     // Assert that destination now reflects the latest state.
-    assertThat(destination.numExistingBytes()).isEqualTo(0);
-    assertThat(destination.readMetadata()).isEqualTo(emptyMetadata);
+    assertThat(destination.numExistingBytes().get(TIMEOUT, SECONDS)).isEqualTo(0);
+    assertThat(destination.readMetadata().get(TIMEOUT, SECONDS)).isEqualTo(emptyMetadata);
   }
 
   private DownloadMetadataStore createMetadataStore() throws Exception {

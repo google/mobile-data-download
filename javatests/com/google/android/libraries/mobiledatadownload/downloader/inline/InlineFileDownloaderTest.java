@@ -58,9 +58,9 @@ public final class InlineFileDownloaderTest {
       new FakeFileBackend(AndroidFileBackend.builder(CONTEXT).build());
   private static final SynchronousFileStorage FILE_STORAGE =
       new SynchronousFileStorage(
-          /* backends = */ ImmutableList.of(FAKE_FILE_BACKEND),
-          /* transforms = */ ImmutableList.of(),
-          /* monitors = */ ImmutableList.of());
+          /* backends= */ ImmutableList.of(FAKE_FILE_BACKEND),
+          /* transforms= */ ImmutableList.of(),
+          /* monitors= */ ImmutableList.of());
 
   private final Uri fileUri =
       Uri.parse(

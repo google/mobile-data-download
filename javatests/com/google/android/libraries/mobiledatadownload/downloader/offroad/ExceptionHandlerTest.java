@@ -33,9 +33,9 @@ public final class ExceptionHandlerTest {
   public void mapToDownloadException_withDefaultImpl_handlesHttpStatusErrors() throws Exception {
     ErrorDetails errorDetails =
         ErrorDetails.createFromHttpErrorResponse(
-            /* httpResponseCode = */ 404,
-            /* httpResponseHeaders = */ ImmutableMap.of(),
-            /* message = */ "404 response");
+            /* httpResponseCode= */ 404,
+            /* httpResponseHeaders= */ ImmutableMap.of(),
+            /* message= */ "404 response");
     RequestException requestException = new RequestException(errorDetails);
 
     ExceptionHandler handler = ExceptionHandler.withDefaultHandling();
@@ -54,9 +54,9 @@ public final class ExceptionHandlerTest {
           throws Exception {
     ErrorDetails errorDetails =
         ErrorDetails.createFromHttpErrorResponse(
-            /* httpResponseCode = */ 404,
-            /* httpResponseHeaders = */ ImmutableMap.of(),
-            /* message = */ "404 response");
+            /* httpResponseCode= */ 404,
+            /* httpResponseHeaders= */ ImmutableMap.of(),
+            /* message= */ "404 response");
     RequestException requestException = new RequestException(errorDetails);
 
     com.google.android.downloader.DownloadException wrappedException =

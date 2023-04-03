@@ -28,6 +28,7 @@ import com.google.common.base.Supplier;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.ManifestConfig;
 import java.util.ArrayList;
@@ -68,6 +69,7 @@ public final class LocaleOverrider implements ManifestConfigOverrider {
     private Executor lightweightExecutor;
 
     /** only one of setLocaleSupplier or setLocaleFutureSupplier is required */
+    @CanIgnoreReturnValue
     public Builder setLocaleSupplier(Supplier<Locale> localeSupplier) {
       this.localeSupplier = () -> Futures.immediateFuture(localeSupplier.get());
       this.lightweightExecutor =
@@ -75,6 +77,7 @@ public final class LocaleOverrider implements ManifestConfigOverrider {
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder setLocaleFutureSupplier(
         Supplier<ListenableFuture<Locale>> localeSupplier, Executor lightweightExecutor) {
       this.localeSupplier = localeSupplier;
@@ -87,6 +90,7 @@ public final class LocaleOverrider implements ManifestConfigOverrider {
      * the config. The set of Locale should be related to ONE {@code group_name} of {@link
      * DataFilegroup}.
      */
+    @CanIgnoreReturnValue
     public Builder setMatchStrategy(
         BiFunction<Locale, Set<Locale>, Optional<Locale>> matchStrategy) {
       this.matchStrategy = matchStrategy;

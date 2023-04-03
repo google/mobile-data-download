@@ -25,6 +25,7 @@ import android.util.Log;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -56,11 +57,13 @@ public class FileDescriptorLeakChecker implements MethodRule {
    *
    * @param processesToMonitor The names of the processes to monitor.
    */
+  @CanIgnoreReturnValue
   public FileDescriptorLeakChecker withProcessesToMonitor(List<String> processesToMonitor) {
     this.processesToMonitor = processesToMonitor;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public FileDescriptorLeakChecker withFilesToMonitor(List<String> filesToMonitor) {
     this.filesToMonitor = filesToMonitor;
     return this;
@@ -72,6 +75,7 @@ public class FileDescriptorLeakChecker implements MethodRule {
    *
    * @param msToWait Milliseconds the FileDescriptorLeakChecker needs to wait before retrying.
    */
+  @CanIgnoreReturnValue
   public FileDescriptorLeakChecker withWaitIfFails(long msToWait) {
     this.msToWait = msToWait;
     return this;

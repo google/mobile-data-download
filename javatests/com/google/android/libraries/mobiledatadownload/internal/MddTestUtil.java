@@ -26,10 +26,6 @@ import android.os.Build.VERSION;
 import android.support.test.uiautomator.UiDevice;
 import android.util.Log;
 import com.google.android.apps.common.testing.util.BackdoorTestUtil;
-import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
-import com.google.mobiledatadownload.TransformProto.Transform;
-import com.google.mobiledatadownload.TransformProto.Transforms;
-import com.google.mobiledatadownload.TransformProto.ZipTransform;
 import com.google.mobiledatadownload.internal.MetadataProto.BaseFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
@@ -38,6 +34,10 @@ import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile.DiffDecode
 import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
 import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
+import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
+import com.google.mobiledatadownload.TransformProto.Transform;
+import com.google.mobiledatadownload.TransformProto.Transforms;
+import com.google.mobiledatadownload.TransformProto.ZipTransform;
 import com.google.protobuf.MessageLite;
 import java.io.IOException;
 import java.util.Collections;
@@ -103,7 +103,7 @@ public class MddTestUtil {
     DataFileGroupInternal.Builder dataFileGroupInternal =
         DataFileGroupInternal.newBuilder().setGroupName(fileGroupName);
     for (int i = 0; i < fileCount; ++i) {
-      dataFileGroupInternal.addFile(createSharedDataFile(fileGroupName, /* fileIndex = */ i));
+      dataFileGroupInternal.addFile(createSharedDataFile(fileGroupName, /* fileIndex= */ i));
     }
     return dataFileGroupInternal.build();
   }

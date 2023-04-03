@@ -23,6 +23,8 @@ import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentF
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CheckReturnValue;
+import com.google.mobiledatadownload.LogProto.StableSamplingInfo;
+import com.google.protobuf.util.Timestamps;
 import java.util.Random;
 
 /** Class responsible for sampling events. */
@@ -45,7 +47,7 @@ public final class LogSampler {
 
   /**
    * Determines whether the event should be logged. If the event should be logged it returns an
-   * instance of Void that should be attached to the log events.
+   * instance of StableSamplingInfo that should be attached to the log events.
    *
    * <p>If stable sampling is enabled, this is deterministic. If stable sampling is disabled, the
    * result can change on each call based on the provided Random instance.
@@ -56,9 +58,9 @@ public final class LogSampler {
    *     If it is absent, stable sampling will not be used.
    * @return a future of an optional of StableSamplingInfo. The future will resolve to an absent
    *     Optional if the event should not be logged. If the event should be logged, the returned
-   *     Void should be attached to the log event.
+   *     StableSamplingInfo should be attached to the log event.
    */
-  public ListenableFuture<Optional<Void>> shouldLog(
+  public ListenableFuture<Optional<StableSamplingInfo>> shouldLog(
       long sampleInterval, Optional<LoggingStateStore> loggingStateStore) {
     if (sampleInterval == 0L) {
       return immediateFuture(Optional.absent());
@@ -75,12 +77,13 @@ public final class LogSampler {
   /**
    * Returns standard random event based sampling.
    *
-   * @return if the event should be sampled, returns the Void with stable_sampling_used = false.
-   *     Otherwise, returns an empty Optional.
+   * @return if the event should be sampled, returns the StableSamplingInfo with
+   *     stable_sampling_used = false. Otherwise, returns an empty Optional.
    */
-  private ListenableFuture<Optional<Void>> shouldLogPerEvent(long sampleInterval) {
+  private ListenableFuture<Optional<StableSamplingInfo>> shouldLogPerEvent(long sampleInterval) {
     if (shouldSamplePerEvent(sampleInterval)) {
-      return immediateFuture(Optional.absent());
+      return immediateFuture(
+          Optional.of(StableSamplingInfo.newBuilder().setStableSamplingUsed(false).build()));
     } else {
       return immediateFuture(Optional.absent());
     }
@@ -100,10 +103,11 @@ public final class LogSampler {
   /**
    * Returns device stable sampling.
    *
-   * @return if the event should be sampled, returns the Void with stable_sampling_used = true and
-   *     all other fields populated. Otherwise, returns an empty Optional.
+   * @return if the event should be sampled, returns the StableSamplingInfo with
+   *     stable_sampling_used = true and all other fields populated. Otherwise, returns an empty
+   *     Optional.
    */
-  private ListenableFuture<Optional<Void>> shouldLogDeviceStable(
+  private ListenableFuture<Optional<StableSamplingInfo>> shouldLogDeviceStable(
       long sampleInterval, LoggingStateStore loggingStateStore) {
     return PropagatedFluentFuture.from(loggingStateStore.getStableSamplingInfo())
         .transform(
@@ -118,7 +122,16 @@ public final class LogSampler {
                 return Optional.absent();
               }
 
-              return Optional.absent();
+              return Optional.of(
+                  StableSamplingInfo.newBuilder()
+                      .setStableSamplingUsed(true)
+                      .setStableSamplingFirstEnabledTimestampMs(
+                          Timestamps.toMillis(samplingInfo.getLogSamplingSaltSetTimestamp()))
+                      .setPartOfAlwaysLoggingGroup(
+                          isPartOfSample(
+                              samplingInfo.getStableLogSamplingSalt(), /* sampleInterval= */ 100))
+                      .setInvalidSamplingRateUsed(invalidSamplingRateUsed)
+                      .build());
             },
             directExecutor());
   }

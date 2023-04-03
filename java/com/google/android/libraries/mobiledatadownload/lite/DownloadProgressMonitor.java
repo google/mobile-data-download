@@ -21,11 +21,11 @@ import com.google.android.libraries.mobiledatadownload.TimeSource;
 import com.google.android.libraries.mobiledatadownload.file.spi.Monitor;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.errorprone.annotations.concurrent.GuardedBy;
 import java.util.HashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.Nullable;
-import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
 
 /** A Download Progress Monitor to support {@link DownloadListener}. */
@@ -37,7 +37,6 @@ public class DownloadProgressMonitor implements Monitor, SingleFileDownloadProgr
   private final TimeSource timeSource;
   private final Executor sequentialControlExecutor;
 
-  // NOTE: GuardRails prohibits multiple public constructors
   private DownloadProgressMonitor(TimeSource timeSource, Executor controlExecutor) {
     this.timeSource = timeSource;
 

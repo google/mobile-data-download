@@ -26,8 +26,10 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -37,40 +39,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
-import android.util.Pair;
 import androidx.test.core.app.ApplicationProvider;
-import com.google.android.libraries.mobiledatadownload.AccountSource;
-import com.google.android.libraries.mobiledatadownload.AggregateException;
-import com.google.android.libraries.mobiledatadownload.DownloadException;
-import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
-import com.google.android.libraries.mobiledatadownload.FileSource;
-import com.google.android.libraries.mobiledatadownload.SilentFeedback;
-import com.google.android.libraries.mobiledatadownload.account.AccountUtil;
-import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
-import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
-import com.google.android.libraries.mobiledatadownload.file.common.LimitExceededException;
-import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
-import com.google.android.libraries.mobiledatadownload.internal.FileGroupManager.GroupDownloadStatus;
-import com.google.android.libraries.mobiledatadownload.internal.downloader.DownloaderCallbackImpl;
-import com.google.android.libraries.mobiledatadownload.internal.downloader.MddFileDownloader;
-import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
-import com.google.android.libraries.mobiledatadownload.internal.experimentation.NoOpDownloadStageManager;
-import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
-import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
-import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
-import com.google.android.libraries.mobiledatadownload.monitor.DownloadProgressMonitor;
-import com.google.android.libraries.mobiledatadownload.testing.FakeTimeSource;
-import com.google.android.libraries.mobiledatadownload.testing.TestFlags;
-import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
-import com.google.common.labs.concurrent.LabsFutures;
-import com.google.common.truth.Correspondence;
-import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupBookkeeping;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
@@ -84,6 +53,45 @@ import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
 import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
+import com.google.android.libraries.mobiledatadownload.AccountSource;
+import com.google.android.libraries.mobiledatadownload.AggregateException;
+import com.google.android.libraries.mobiledatadownload.DownloadException;
+import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
+import com.google.android.libraries.mobiledatadownload.FileSource;
+import com.google.android.libraries.mobiledatadownload.SilentFeedback;
+import com.google.android.libraries.mobiledatadownload.account.AccountUtil;
+import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
+import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
+import com.google.android.libraries.mobiledatadownload.file.common.LimitExceededException;
+import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
+import com.google.android.libraries.mobiledatadownload.internal.FileGroupManager.GroupDownloadStatus;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
+import com.google.android.libraries.mobiledatadownload.internal.downloader.DownloaderCallbackImpl;
+import com.google.android.libraries.mobiledatadownload.internal.downloader.MddFileDownloader;
+import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
+import com.google.android.libraries.mobiledatadownload.internal.experimentation.NoOpDownloadStageManager;
+import com.google.android.libraries.mobiledatadownload.internal.logging.DownloadStateLogger;
+import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
+import com.google.android.libraries.mobiledatadownload.internal.logging.testing.FakeEventLogger;
+import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
+import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
+import com.google.android.libraries.mobiledatadownload.monitor.DownloadProgressMonitor;
+import com.google.android.libraries.mobiledatadownload.testing.FakeTimeSource;
+import com.google.android.libraries.mobiledatadownload.testing.TestFlags;
+import com.google.common.base.Optional;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import com.google.common.labs.concurrent.LabsFutures;
+import com.google.common.truth.Correspondence;
+import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
+import com.google.mobiledatadownload.LogEnumsProto.MddDownloadResult;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.ExtensionRegistryLite;
@@ -136,13 +144,14 @@ public class FileGroupManagerTest {
 
   private static final Correspondence<GroupKey, String> GROUP_KEY_TO_VARIANT =
       Correspondence.transforming(GroupKey::getVariantId, "using variant");
-  private static final Correspondence<Pair<GroupKey, DataFileGroupInternal>, Pair<String, String>>
-      KEY_GROUP_PAIR_TO_VARIANT_PAIR =
-          Correspondence.transforming(
-              keyGroupPair ->
-                  Pair.create(
-                      keyGroupPair.first.getVariantId(), keyGroupPair.second.getVariantId()),
-              "using variants from group key and file group");
+  private static final Correspondence<GroupKeyAndGroup, String> KEY_GROUP_PAIR_TO_VARIANT =
+      Correspondence.transforming(
+          keyGroupPair -> {
+            assertThat(keyGroupPair.groupKey().getVariantId())
+                .isEqualTo(keyGroupPair.dataFileGroup().getVariantId());
+            return keyGroupPair.dataFileGroup().getVariantId();
+          },
+          "using variant from group key and file group");
 
   private static GroupKey testKey;
   private static GroupKey testKey2;
@@ -158,8 +167,12 @@ public class FileGroupManagerTest {
   private SynchronousFileStorage fileStorage;
   public File publicDirectory;
   private final TestFlags flags = new TestFlags();
-  @Rule public TemporaryFolder folder = new TemporaryFolder();
-  @Rule public final MockitoRule mocks = MockitoJUnit.rule();
+
+  @Rule(order = 2)
+  public TemporaryFolder folder = new TemporaryFolder();
+
+  @Rule(order = 3)
+  public final MockitoRule mocks = MockitoJUnit.rule();
 
   @Mock EventLogger mockLogger;
   @Mock SilentFeedback mockSilentFeedback;
@@ -260,8 +273,22 @@ public class FileGroupManagerTest {
     ReflectionHelpers.setStaticField(Build.VERSION.class, "SDK_INT", Build.VERSION_CODES.R);
   }
 
+  private void assertLoggedNewConfigs(
+      FakeEventLogger fakeEventLogger,
+      DataDownloadFileGroupStats fileGroupStats,
+      Void newConfigReceivedInfo) {
+    ArrayListMultimap<DataDownloadFileGroupStats, Void> loggedConfigs =
+        fakeEventLogger.getLoggedNewConfigReceived();
+    assertThat(loggedConfigs).hasSize(1);
+    assertThat(loggedConfigs.get(fileGroupStats)).containsExactly(newConfigReceivedInfo);
+  }
+
   @Test
   public void testAddGroupForDownload() throws Exception {
+    FakeEventLogger fakeEventLogger = new FakeEventLogger();
+
+    resetFileGroupManager(fakeEventLogger, fileGroupsMetadata, sharedFileManager);
+
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2);
     NewFileKey[] groupKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(dataFileGroup);
 
@@ -273,10 +300,16 @@ public class FileGroupManagerTest {
 
     assertThat(sharedFileManager.getSharedFile(groupKeys[0]).get()).isNotNull();
     assertThat(sharedFileManager.getSharedFile(groupKeys[1]).get()).isNotNull();
+
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
   public void testAddGroupForDownload_correctlyPopulatesBuildIdAndVariantId() throws Exception {
+    FakeEventLogger fakeEventLogger = new FakeEventLogger();
+    resetFileGroupManager(fakeEventLogger, fileGroupsMetadata, sharedFileManager);
+
     DataFileGroupInternal dataFileGroup =
         MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
             .setBuildId(10)
@@ -292,13 +325,23 @@ public class FileGroupManagerTest {
 
     assertThat(sharedFileManager.getSharedFile(groupKeys[0]).get()).isNotNull();
     assertThat(sharedFileManager.getSharedFile(groupKeys[1]).get()).isNotNull();
+
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
   public void testAddGroupForDownload_groupUpdated() throws Exception {
+    FakeEventLogger fakeEventLogger = new FakeEventLogger();
+    resetFileGroupManager(fakeEventLogger, fileGroupsMetadata, sharedFileManager);
+
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2);
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
+
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
+    fakeEventLogger.reset();
 
     // Update the file id and see that the group gets updated in the pending groups list.
     dataFileGroup =
@@ -309,14 +352,26 @@ public class FileGroupManagerTest {
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
 
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
+    fakeEventLogger.reset();
+
     // Update other parameters and check that we successfully add the group.
     dataFileGroup = dataFileGroup.toBuilder().setFileGroupVersionNumber(2).build();
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
 
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
+    fakeEventLogger.reset();
+
     dataFileGroup = dataFileGroup.toBuilder().setStaleLifetimeSecs(50).build();
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
+
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
+    fakeEventLogger.reset();
 
     dataFileGroup =
         dataFileGroup.toBuilder()
@@ -328,6 +383,10 @@ public class FileGroupManagerTest {
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
 
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
+    fakeEventLogger.reset();
+
     DownloadConditions downloadConditions =
         DownloadConditions.newBuilder()
             .setDeviceStoragePolicy(DeviceStoragePolicy.BLOCK_DOWNLOAD_LOWER_THRESHOLD)
@@ -336,36 +395,61 @@ public class FileGroupManagerTest {
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
 
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
+    fakeEventLogger.reset();
+
     dataFileGroup =
         dataFileGroup.toBuilder()
             .setAllowedReadersEnum(AllowedReaders.ONLY_GOOGLE_PLAY_SERVICES)
             .build();
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
+
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
   public void testAddGroupForDownload_groupUpdated_whenBuildChanges() throws Exception {
+    FakeEventLogger fakeEventLogger = new FakeEventLogger();
+    resetFileGroupManager(fakeEventLogger, fileGroupsMetadata, sharedFileManager);
+
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2);
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
+
+    // Reset to clear events before next add group call
+    fakeEventLogger.reset();
 
     // Update the file id and see that the group gets updated in the pending groups list.
     dataFileGroup = dataFileGroup.toBuilder().setBuildId(123456789L).build();
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
+
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
   public void testAddGroupForDownload_groupUpdated_whenVariantChanges() throws Exception {
+    FakeEventLogger fakeEventLogger = new FakeEventLogger();
+    resetFileGroupManager(fakeEventLogger, fileGroupsMetadata, sharedFileManager);
+
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2);
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
+
+    // Reset to clear events before next add group call
+    fakeEventLogger.reset();
 
     // Update the file id and see that the group gets updated in the pending groups list.
     dataFileGroup = dataFileGroup.toBuilder().setVariantId("some-different-variant").build();
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, dataFileGroup, CURRENT_TIMESTAMP);
+
+    assertLoggedNewConfigs(
+        fakeEventLogger, createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
@@ -422,6 +506,8 @@ public class FileGroupManagerTest {
 
     // Send the exact same group as the downloaded group, and check that it is considered duplicate.
     assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isFalse();
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -451,15 +537,21 @@ public class FileGroupManagerTest {
     assertThat(fileGroupManager.addGroupForDownload(testKey, firstGroup).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, firstGroup, CURRENT_TIMESTAMP);
 
+    verify(mockLogger)
+        .logNewConfigReceived(createFileGroupDetails(firstGroup).clearFileCount().build(), null);
+    reset(mockLogger);
+
     // Create a second group that is identical except for one different file id.
     DataFileGroupInternal.Builder secondGroup =
         MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder();
     secondGroup.setFile(0, secondGroup.getFile(0).toBuilder().setFileId("file2"));
     writeDownloadedFileGroup(testKey, secondGroup.build());
 
-    // Send the same group as downloaded group, and check that it is not considered duplicate.
+    // Send the updated group, and check that it is not considered duplicate.
     assertThat(fileGroupManager.addGroupForDownload(testKey, secondGroup.build()).get()).isTrue();
     verifyAddGroupForDownloadWritesMetadata(testKey, secondGroup.build(), CURRENT_TIMESTAMP);
+    verify(mockLogger)
+        .logNewConfigReceived(createFileGroupDetails(firstGroup).clearFileCount().build(), null);
   }
 
   @Test
@@ -483,6 +575,9 @@ public class FileGroupManagerTest {
 
     // Verify that we tried to subscribe to only the first 2 files.
     assertThat(fileCaptor.getAllValues()).containsExactly(groupKeys[0], groupKeys[1]);
+
+    verify(mockLogger)
+        .logNewConfigReceived(createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
@@ -506,6 +601,9 @@ public class FileGroupManagerTest {
 
     // Verify that we tried to subscribe to only the first file.
     assertThat(fileCaptor.getAllValues()).containsExactly(groupKeys[0]);
+
+    verify(mockLogger)
+        .logNewConfigReceived(createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
@@ -550,6 +648,14 @@ public class FileGroupManagerTest {
     assertThrows(
         UninstalledAppException.class,
         () -> fileGroupManager.addGroupForDownload(uninstalledAppKey, dataFileGroup));
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -566,6 +672,14 @@ public class FileGroupManagerTest {
     assertThrows(
         ExpiredFileGroupException.class,
         () -> fileGroupManager.addGroupForDownload(testKey, dataFileGroup));
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -582,6 +696,14 @@ public class FileGroupManagerTest {
     assertThrows(
         ExpiredFileGroupException.class,
         () -> fileGroupManager.addGroupForDownload(testKey, dataFileGroup));
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -604,6 +726,8 @@ public class FileGroupManagerTest {
 
     assertThat(sharedFileManager.getSharedFile(groupKeys[0]).get()).isNotNull();
     assertThat(sharedFileManager.getSharedFile(groupKeys[1]).get()).isNotNull();
+    verify(mockLogger)
+        .logNewConfigReceived(createFileGroupDetails(dataFileGroup).clearFileCount().build(), null);
   }
 
   @Test
@@ -628,6 +752,9 @@ public class FileGroupManagerTest {
 
     assertThat(sharedFileManager.getSharedFile(groupKeys[0]).get()).isNotNull();
     assertThat(sharedFileManager.getSharedFile(groupKeys[1]).get()).isNotNull();
+    verify(mockLogger)
+        .logNewConfigReceived(
+            createFileGroupDetails(dataFileGroup.build()).clearFileCount().build(), null);
   }
 
   @Test
@@ -670,6 +797,7 @@ public class FileGroupManagerTest {
   @Test
   public void testAddGroupForDownload_delayedDownload() throws Exception {
     flags.enableDelayedDownload = Optional.of(true);
+
     // Create 2 groups, one of which requires device side activation.
     DataFileGroupInternal fileGroup1 =
         MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
@@ -825,6 +953,9 @@ public class FileGroupManagerTest {
 
     assertThat(fileGroupsMetadata.getAllStaleGroups().get()).isEmpty();
     assertThat(fileGroupsMetadata.getAllGroupKeys().get()).isEmpty();
+
+    // There is no pending file group, so no call to clearSyncReasons.
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -873,7 +1004,7 @@ public class FileGroupManagerTest {
             newFileKey1.getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     Uri pendingFileUri2 =
         DirectoryUtil.getOnDeviceUri(
             context,
@@ -882,10 +1013,12 @@ public class FileGroupManagerTest {
             newFileKey2.getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
 
-    verify(mockDownloader).stopDownloading(pendingFileUri1);
-    verify(mockDownloader).stopDownloading(pendingFileUri2);
+    verify(mockDownloader).stopDownloading(newFileKey1.getChecksum(), pendingFileUri1);
+    verify(mockDownloader).stopDownloading(newFileKey2.getChecksum(), pendingFileUri2);
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -930,7 +1063,9 @@ public class FileGroupManagerTest {
                         .build())
                 .build());
 
-    verify(mockDownloader, never()).stopDownloading(any(Uri.class));
+    verify(mockDownloader, never()).stopDownloading(any(String.class), any(Uri.class));
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -996,10 +1131,12 @@ public class FileGroupManagerTest {
             registeredFileKey.getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
 
     // Only called once to stop download of pending file.
-    verify(mockDownloader).stopDownloading(pendingFileUri);
+    verify(mockDownloader).stopDownloading(registeredFileKey.getChecksum(), pendingFileUri);
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -1053,7 +1190,7 @@ public class FileGroupManagerTest {
     assertThat(fileGroupsMetadata.getAllStaleGroups().get()).isEmpty();
     // Downloaded group is still available.
     assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-        .containsExactly(Pair.create(downloadedGroupKey, downloadedFileGroup));
+        .containsExactly(GroupKeyAndGroup.create(downloadedGroupKey, downloadedFileGroup));
 
     Uri pendingFileUri =
         DirectoryUtil.getOnDeviceUri(
@@ -1063,10 +1200,12 @@ public class FileGroupManagerTest {
             registeredFileKey.getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
 
     // Only called once to stop download of pending file.
-    verify(mockDownloader).stopDownloading(pendingFileUri);
+    verify(mockDownloader).stopDownloading(registeredFileKey.getChecksum(), pendingFileUri);
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -1118,8 +1257,8 @@ public class FileGroupManagerTest {
         ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_IN_PROGRESS));
     assertThat(fileGroupsMetadata.getAllFreshGroups().get())
         .containsExactly(
-            new Pair<GroupKey, DataFileGroupInternal>(pendingGroupKey, pendingFileGroup),
-            new Pair<GroupKey, DataFileGroupInternal>(pendingGroupKey2, pendingFileGroup2));
+            GroupKeyAndGroup.create(pendingGroupKey, pendingFileGroup),
+            GroupKeyAndGroup.create(pendingGroupKey2, pendingFileGroup2));
 
     fileGroupManager.removeFileGroup(groupKey, /* pendingOnly= */ false).get();
 
@@ -1128,10 +1267,11 @@ public class FileGroupManagerTest {
     assertThat(readPendingFileGroup(downloadedGroupKey)).isNull();
     assertThat(fileGroupsMetadata.getAllStaleGroups().get()).isEmpty();
     assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-        .containsExactly(
-            new Pair<GroupKey, DataFileGroupInternal>(pendingGroupKey2, pendingFileGroup2));
+        .containsExactly(GroupKeyAndGroup.create(pendingGroupKey2, pendingFileGroup2));
 
-    verify(mockDownloader, never()).stopDownloading(any(Uri.class));
+    verify(mockDownloader, never()).stopDownloading(any(String.class), any(Uri.class));
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -1177,6 +1317,8 @@ public class FileGroupManagerTest {
     verify(mockFileGroupsMetadata).remove(pendingGroupKey);
     verify(mockFileGroupsMetadata).remove(downloadedGroupKey);
     verify(mockFileGroupsMetadata, never()).addStaleGroup(any(DataFileGroupInternal.class));
+
+    verify(mockLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
   }
 
   @Test
@@ -1196,7 +1338,7 @@ public class FileGroupManagerTest {
     writePendingFileGroup(testKey, sideloadedGroup);
     writeDownloadedFileGroup(testKey, sideloadedGroup);
 
-    fileGroupManager.removeFileGroup(testKey, /* pendingOnly = */ false).get();
+    fileGroupManager.removeFileGroup(testKey, /* pendingOnly= */ false).get();
 
     assertThat(readPendingFileGroup(testKey)).isNull();
     assertThat(readDownloadedFileGroup(testKey)).isNull();
@@ -1238,28 +1380,28 @@ public class FileGroupManagerTest {
 
     {
       // Perfrom removal once and check that the default group gets removed
-      fileGroupManager.removeFileGroup(defaultGroupKey, /* pendingOnly = */ false).get();
+      fileGroupManager.removeFileGroup(defaultGroupKey, /* pendingOnly= */ false).get();
 
       assertThat(fileGroupsMetadata.getAllGroupKeys().get())
           .comparingElementsUsing(GROUP_KEY_TO_VARIANT)
           .containsExactly("en", "fr");
       assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT_PAIR)
-          .containsExactly(Pair.create("en", "en"), Pair.create("fr", "fr"));
+          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT)
+          .containsExactly("en", "fr");
 
       assertThat(sharedFilesMetadata.getAllFileKeys().get()).hasSize(1);
     }
 
     {
       // Perform remove again and verify that there is no change in state
-      fileGroupManager.removeFileGroup(defaultGroupKey, /* pendingOnly = */ false).get();
+      fileGroupManager.removeFileGroup(defaultGroupKey, /* pendingOnly= */ false).get();
 
       assertThat(fileGroupsMetadata.getAllGroupKeys().get())
           .comparingElementsUsing(GROUP_KEY_TO_VARIANT)
           .containsExactly("en", "fr");
       assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT_PAIR)
-          .containsExactly(Pair.create("en", "en"), Pair.create("fr", "fr"));
+          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT)
+          .containsExactly("en", "fr");
 
       assertThat(sharedFilesMetadata.getAllFileKeys().get()).hasSize(1);
     }
@@ -1300,28 +1442,28 @@ public class FileGroupManagerTest {
 
     {
       // Perfrom removal once and check that the en group gets removed
-      fileGroupManager.removeFileGroup(enGroupKey, /* pendingOnly = */ false).get();
+      fileGroupManager.removeFileGroup(enGroupKey, /* pendingOnly= */ false).get();
 
       assertThat(fileGroupsMetadata.getAllGroupKeys().get())
           .comparingElementsUsing(GROUP_KEY_TO_VARIANT)
           .containsExactly("", "fr");
       assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT_PAIR)
-          .containsExactly(Pair.create("", ""), Pair.create("fr", "fr"));
+          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT)
+          .containsExactly("", "fr");
 
       assertThat(sharedFilesMetadata.getAllFileKeys().get()).hasSize(1);
     }
 
     {
       // Perform remove again and verify that there is no change in state
-      fileGroupManager.removeFileGroup(enGroupKey, /* pendingOnly = */ false).get();
+      fileGroupManager.removeFileGroup(enGroupKey, /* pendingOnly= */ false).get();
 
       assertThat(fileGroupsMetadata.getAllGroupKeys().get())
           .comparingElementsUsing(GROUP_KEY_TO_VARIANT)
           .containsExactly("", "fr");
       assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT_PAIR)
-          .containsExactly(Pair.create("", ""), Pair.create("fr", "fr"));
+          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT)
+          .containsExactly("", "fr");
 
       assertThat(sharedFilesMetadata.getAllFileKeys().get()).hasSize(1);
     }
@@ -1381,7 +1523,7 @@ public class FileGroupManagerTest {
     assertThat(fileGroupsMetadata.getAllFreshGroups().get()).hasSize(2);
     assertThat(fileGroupsMetadata.getAllStaleGroups().get()).isEmpty();
 
-    verify(mockDownloader, times(0)).stopDownloading(any());
+    verify(mockDownloader, times(0)).stopDownloading(any(), any());
   }
 
   @Test
@@ -1441,8 +1583,8 @@ public class FileGroupManagerTest {
             pendingGroupToRemove1.getFile(0).getFileId(),
             pendingFileKey1.getChecksum(),
             mockSilentFeedback,
-            /* instanceId = */ Optional.absent(),
-            /* androidShared = */ false);
+            /* instanceId= */ Optional.absent(),
+            /* androidShared= */ false);
     Uri pendingFileUri2 =
         DirectoryUtil.getOnDeviceUri(
             context,
@@ -1450,8 +1592,8 @@ public class FileGroupManagerTest {
             pendingGroupToRemove2.getFile(0).getFileId(),
             pendingFileKey2.getChecksum(),
             mockSilentFeedback,
-            /* instanceId = */ Optional.absent(),
-            /* androidShared = */ false);
+            /* instanceId= */ Optional.absent(),
+            /* androidShared= */ false);
     Uri pendingFileUri3 =
         DirectoryUtil.getOnDeviceUri(
             context,
@@ -1459,8 +1601,8 @@ public class FileGroupManagerTest {
             pendingGroupToKeep.getFile(0).getFileId(),
             pendingFileKey3.getChecksum(),
             mockSilentFeedback,
-            /* instanceId = */ Optional.absent(),
-            /* androidShared = */ false);
+            /* instanceId= */ Optional.absent(),
+            /* androidShared= */ false);
 
     // Assert that matching pending groups are removed
     assertThat(readPendingFileGroup(pendingGroupKeyToRemove1)).isNull();
@@ -1470,9 +1612,10 @@ public class FileGroupManagerTest {
     assertThat(fileGroupsMetadata.getAllFreshGroups().get()).hasSize(2);
     assertThat(fileGroupsMetadata.getAllStaleGroups().get()).isEmpty();
 
-    verify(mockDownloader).stopDownloading(pendingFileUri1);
-    verify(mockDownloader).stopDownloading(pendingFileUri2);
-    verify(mockDownloader, times(0)).stopDownloading(pendingFileUri3);
+    verify(mockDownloader).stopDownloading(pendingFileKey1.getChecksum(), pendingFileUri1);
+    verify(mockDownloader).stopDownloading(pendingFileKey2.getChecksum(), pendingFileUri2);
+    verify(mockDownloader, times(0))
+        .stopDownloading(pendingFileKey3.getChecksum(), pendingFileUri3);
   }
 
   @Test
@@ -1529,8 +1672,8 @@ public class FileGroupManagerTest {
             pendingGroupToKeep.getFile(0).getFileId(),
             pendingFileKey1.getChecksum(),
             mockSilentFeedback,
-            /* instanceId = */ Optional.absent(),
-            /* androidShared = */ false);
+            /* instanceId= */ Optional.absent(),
+            /* androidShared= */ false);
 
     // Assert that matching pending groups are removed
     assertThat(readDownloadedFileGroup(downloadedGroupKeyToRemove1)).isNull();
@@ -1540,8 +1683,8 @@ public class FileGroupManagerTest {
 
     assertThat(fileGroupsMetadata.getAllFreshGroups().get())
         .containsExactly(
-            Pair.create(downloadedGroupKeyToKeep, downloadedGroupToKeep),
-            Pair.create(pendingGroupKeyToKeep, pendingGroupToKeep));
+            GroupKeyAndGroup.create(downloadedGroupKeyToKeep, downloadedGroupToKeep),
+            GroupKeyAndGroup.create(pendingGroupKeyToKeep, pendingGroupToKeep));
     assertThat(fileGroupsMetadata.getAllStaleGroups().get())
         .containsExactly(
             downloadedGroupToRemove1.toBuilder()
@@ -1557,7 +1700,8 @@ public class FileGroupManagerTest {
                         .build())
                 .build());
 
-    verify(mockDownloader, times(0)).stopDownloading(pendingFileUri1);
+    verify(mockDownloader, times(0))
+        .stopDownloading(pendingFileKey1.getChecksum(), pendingFileUri1);
   }
 
   @Test
@@ -1622,8 +1766,8 @@ public class FileGroupManagerTest {
             pendingGroupToRemove1.getFile(0).getFileId(),
             pendingFileKey1.getChecksum(),
             mockSilentFeedback,
-            /* instanceId = */ Optional.absent(),
-            /* androidShared = */ false);
+            /* instanceId= */ Optional.absent(),
+            /* androidShared= */ false);
     Uri pendingFileUri2 =
         DirectoryUtil.getOnDeviceUri(
             context,
@@ -1631,8 +1775,8 @@ public class FileGroupManagerTest {
             pendingGroupToRemove2.getFile(0).getFileId(),
             pendingFileKey2.getChecksum(),
             mockSilentFeedback,
-            /* instanceId = */ Optional.absent(),
-            /* androidShared = */ false);
+            /* instanceId= */ Optional.absent(),
+            /* androidShared= */ false);
 
     // Assert that matching pending groups are removed
     assertThat(readDownloadedFileGroup(downloadedGroupKeyToRemove1)).isNull();
@@ -1656,8 +1800,10 @@ public class FileGroupManagerTest {
                         .build())
                 .build());
 
-    verify(mockDownloader, times(1)).stopDownloading(pendingFileUri1);
-    verify(mockDownloader, times(1)).stopDownloading(pendingFileUri2);
+    verify(mockDownloader, times(1))
+        .stopDownloading(pendingFileKey1.getChecksum(), pendingFileUri1);
+    verify(mockDownloader, times(1))
+        .stopDownloading(pendingFileKey2.getChecksum(), pendingFileUri2);
   }
 
   @Test
@@ -1708,17 +1854,21 @@ public class FileGroupManagerTest {
     assertThat(readPendingFileGroup(pendingGroupKeyToRemove2)).isNull();
     assertThat(readPendingFileGroup(pendingGroupKeyToKeep)).isNotNull();
     assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-        .containsExactly(Pair.create(pendingGroupKeyToKeep, pendingGroupToKeep));
+        .containsExactly(GroupKeyAndGroup.create(pendingGroupKeyToKeep, pendingGroupToKeep));
 
     // Get On Device Uris to check if file downloads were cancelled
     List<Uri> uncancelledFileUris = getOnDeviceUrisForFileGroup(pendingGroupToKeep);
-    verify(mockDownloader, times(0)).stopDownloading(uncancelledFileUris.get(0));
-    verify(mockDownloader, times(0)).stopDownloading(uncancelledFileUris.get(1));
+    verify(mockDownloader, times(0)).stopDownloading(any(), eq(uncancelledFileUris.get(0)));
+    verify(mockDownloader, times(0)).stopDownloading(any(), eq(uncancelledFileUris.get(1)));
 
     verify(mockDownloader, times(1))
-        .stopDownloading(getOnDeviceUrisForFileGroup(pendingGroupToRemove1).get(0));
+        .stopDownloading(
+            pendingGroupToRemove1.getFile(0).getChecksum(),
+            getOnDeviceUrisForFileGroup(pendingGroupToRemove1).get(0));
     verify(mockDownloader, times(1))
-        .stopDownloading(getOnDeviceUrisForFileGroup(pendingGroupToRemove2).get(0));
+        .stopDownloading(
+            pendingGroupToRemove2.getFile(0).getChecksum(),
+            getOnDeviceUrisForFileGroup(pendingGroupToRemove2).get(0));
   }
 
   @Test
@@ -1753,6 +1903,7 @@ public class FileGroupManagerTest {
 
     verify(mockFileGroupsMetadata, times(0)).addStaleGroup(any());
     verify(mockSharedFileManager, times(0)).cancelDownload(any());
+    verify(mockLogger, times(1)).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     verify(mockFileGroupsMetadata, times(1)).removeAllGroupsWithKeys(any());
     List<GroupKey> attemptedRemoveKeys = groupKeysCaptor.getValue();
     assertThat(attemptedRemoveKeys).containsExactly(pendingGroupKey);
@@ -1801,6 +1952,7 @@ public class FileGroupManagerTest {
 
     verify(mockFileGroupsMetadata, times(0)).addStaleGroup(any());
     verify(mockSharedFileManager, times(0)).cancelDownload(any());
+    verify(mockLogger, times(1)).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     verify(mockFileGroupsMetadata, times(2)).removeAllGroupsWithKeys(any());
     List<List<GroupKey>> removeCallInvocations = groupKeysCaptor.getAllValues();
     assertThat(removeCallInvocations.get(0)).containsExactly(pendingGroupKey);
@@ -1852,6 +2004,7 @@ public class FileGroupManagerTest {
 
     verify(mockFileGroupsMetadata, times(1)).addStaleGroup(downloadedGroup);
     verify(mockSharedFileManager, times(0)).cancelDownload(any());
+    verify(mockLogger, times(1)).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     verify(mockFileGroupsMetadata, times(2)).removeAllGroupsWithKeys(any());
     List<List<GroupKey>> removeCallInvocations = groupKeysCaptor.getAllValues();
     assertThat(removeCallInvocations.get(0)).containsExactly(pendingGroupKey);
@@ -1946,8 +2099,8 @@ public class FileGroupManagerTest {
           .comparingElementsUsing(GROUP_KEY_TO_VARIANT)
           .containsExactly("fr");
       assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT_PAIR)
-          .containsExactly(Pair.create("fr", "fr"));
+          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT)
+          .containsExactly("fr");
 
       assertThat(sharedFilesMetadata.getAllFileKeys().get()).hasSize(1);
     }
@@ -1960,8 +2113,8 @@ public class FileGroupManagerTest {
           .comparingElementsUsing(GROUP_KEY_TO_VARIANT)
           .containsExactly("fr");
       assertThat(fileGroupsMetadata.getAllFreshGroups().get())
-          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT_PAIR)
-          .containsExactly(Pair.create("fr", "fr"));
+          .comparingElementsUsing(KEY_GROUP_PAIR_TO_VARIANT)
+          .containsExactly("fr");
 
       assertThat(sharedFilesMetadata.getAllFileKeys().get()).hasSize(1);
     }
@@ -2053,6 +2206,7 @@ public class FileGroupManagerTest {
   public void testSetGroupActivation_deactivationRemovesGroupsRequiringActivation()
       throws Exception {
     flags.enableDelayedDownload = Optional.of(true);
+
     // Create 2 groups, one of which requires device side activation.
     DataFileGroupInternal.Builder fileGroup1 =
         MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder();
@@ -2114,11 +2268,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 0,
-                        /* variantId = */ "",
+                        /* buildId= */ 0,
+                        /* variantId= */ "",
                         updatedDataFileList,
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.absent(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.absent(),
                         noCustomValidation())
                     .get());
 
@@ -2153,11 +2307,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 1,
-                        /* variantId = */ "",
-                        /* updatedDataFileList = */ ImmutableList.of(),
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.absent(),
+                        /* buildId= */ 1,
+                        /* variantId= */ "",
+                        /* updatedDataFileList= */ ImmutableList.of(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.absent(),
                         noCustomValidation())
                     .get());
 
@@ -2193,11 +2347,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 0,
-                        /* variantId = */ "testvariant",
-                        /* updatedDataFileList = */ ImmutableList.of(),
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.absent(),
+                        /* buildId= */ 0,
+                        /* variantId= */ "testvariant",
+                        /* updatedDataFileList= */ ImmutableList.of(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.absent(),
                         noCustomValidation())
                     .get());
 
@@ -2237,11 +2391,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 3,
-                        /* variantId = */ "testvariant",
-                        /* updatedDataFileList = */ ImmutableList.of(),
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.of(customProperty),
+                        /* buildId= */ 3,
+                        /* variantId= */ "testvariant",
+                        /* updatedDataFileList= */ ImmutableList.of(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.of(customProperty),
                         noCustomValidation())
                     .get());
 
@@ -2281,11 +2435,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 1,
-                        /* variantId = */ "testvariant3",
-                        /* updatedDataFileList = */ ImmutableList.of(),
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.of(customProperty),
+                        /* buildId= */ 1,
+                        /* variantId= */ "testvariant3",
+                        /* updatedDataFileList= */ ImmutableList.of(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.of(customProperty),
                         noCustomValidation())
                     .get());
 
@@ -2335,11 +2489,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 1,
-                        /* variantId = */ "testvariant",
-                        /* updatedDataFileList = */ ImmutableList.of(),
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.of(mismatchedCustomProperty),
+                        /* buildId= */ 1,
+                        /* variantId= */ "testvariant",
+                        /* updatedDataFileList= */ ImmutableList.of(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.of(mismatchedCustomProperty),
                         noCustomValidation())
                     .get());
 
@@ -2386,11 +2540,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 1,
-                        /* variantId = */ "testvariant",
-                        /* updatedDataFileList = */ ImmutableList.of(),
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.absent(),
+                        /* buildId= */ 1,
+                        /* variantId= */ "testvariant",
+                        /* updatedDataFileList= */ ImmutableList.of(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.absent(),
                         noCustomValidation())
                     .get());
 
@@ -2441,11 +2595,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 0,
-                        /* variantId = */ "",
-                        /* updatedDataFileList = */ updatedDataFileList,
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.absent(),
+                        /* buildId= */ 0,
+                        /* variantId= */ "",
+                        /* updatedDataFileList= */ updatedDataFileList,
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.absent(),
                         noCustomValidation())
                     .get());
     assertThat(ex).hasCauseThat().isInstanceOf(DownloadException.class);
@@ -2483,11 +2637,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 0,
-            /* variantId = */ "",
-            /* updatedDataFileList = */ ImmutableList.of(),
+            /* buildId= */ 0,
+            /* variantId= */ "",
+            /* updatedDataFileList= */ ImmutableList.of(),
             inlineFileMap,
-            /* customPropertyOptional = */ Optional.absent(),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2515,11 +2669,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 0,
-            /* variantId = */ "",
-            /* updatedDataFileList = */ ImmutableList.of(),
-            /* inlineFileMap = */ ImmutableMap.of(),
-            /* customPropertyOptional = */ Optional.absent(),
+            /* buildId= */ 0,
+            /* variantId= */ "",
+            /* updatedDataFileList= */ ImmutableList.of(),
+            /* inlineFileMap= */ ImmutableMap.of(),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2571,11 +2725,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 0,
-            /* variantId = */ "",
+            /* buildId= */ 0,
+            /* variantId= */ "",
             updatedDataFileList,
             inlineFileMap,
-            /* customPropertyOptional = */ Optional.absent(),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2627,11 +2781,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 0,
-            /* variantId = */ "",
+            /* buildId= */ 0,
+            /* variantId= */ "",
             updatedDataFileList,
             inlineFileMap,
-            /* customPropertyOptional = */ Optional.absent(),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2696,11 +2850,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 10,
-            /* variantId = */ "",
+            /* buildId= */ 10,
+            /* variantId= */ "",
             updatedDataFileList,
             inlineFileMap,
-            /* customPropertyOptional = */ Optional.absent(),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2770,11 +2924,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 0,
-            /* variantId = */ "",
+            /* buildId= */ 0,
+            /* variantId= */ "",
             updatedDataFileList,
             inlineFileMap,
-            /* customPropertyOptional = */ Optional.absent(),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2834,11 +2988,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 0,
-            /* variantId = */ "",
-            /* updatedDataFileList = */ ImmutableList.of(),
-            /* inlineFileMap = */ ImmutableMap.of("inline-file", testFileSource),
-            /* customPropertyOptional = */ Optional.absent(),
+            /* buildId= */ 0,
+            /* variantId= */ "",
+            /* updatedDataFileList= */ ImmutableList.of(),
+            /* inlineFileMap= */ ImmutableMap.of("inline-file", testFileSource),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2886,11 +3040,11 @@ public class FileGroupManagerTest {
     fileGroupManager
         .importFilesIntoFileGroup(
             groupKey,
-            /* buildId = */ 0,
-            /* variantId = */ "",
-            /* updatedDataFileList = */ ImmutableList.of(),
-            /* inlineFileMap = */ ImmutableMap.of("inline-file", testFileSource),
-            /* customPropertyOptional = */ Optional.absent(),
+            /* buildId= */ 0,
+            /* variantId= */ "",
+            /* updatedDataFileList= */ ImmutableList.of(),
+            /* inlineFileMap= */ ImmutableMap.of("inline-file", testFileSource),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -2926,11 +3080,11 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 0,
-                        /* variantId = */ "",
-                        /* updatedDataFileList = */ ImmutableList.of(),
-                        /* inlineFileMap = */ ImmutableMap.of(),
-                        /* customPropertyOptional = */ Optional.absent(),
+                        /* buildId= */ 0,
+                        /* variantId= */ "",
+                        /* updatedDataFileList= */ ImmutableList.of(),
+                        /* inlineFileMap= */ ImmutableMap.of(),
+                        /* customPropertyOptional= */ Optional.absent(),
                         noCustomValidation())
                     .get());
     assertThat(ex).hasCauseThat().isInstanceOf(AggregateException.class);
@@ -3006,12 +3160,12 @@ public class FileGroupManagerTest {
                 fileGroupManager
                     .importFilesIntoFileGroup(
                         groupKey,
-                        /* buildId = */ 0,
-                        /* variantId = */ "",
+                        /* buildId= */ 0,
+                        /* variantId= */ "",
                         updatedDataFileList,
-                        /* inlineFileMap = */ ImmutableMap.of(
+                        /* inlineFileMap= */ ImmutableMap.of(
                             "inline-file-1", testFileSource1, "inline-file-2", testFileSource2),
-                        /* customPropertyOptional = */ Optional.absent(),
+                        /* customPropertyOptional= */ Optional.absent(),
                         noCustomValidation())
                     .get());
 
@@ -3076,9 +3230,9 @@ public class FileGroupManagerTest {
             testKey,
             sideloadedGroup.getBuildId(),
             sideloadedGroup.getVariantId(),
-            /* updatedDataFileList = */ ImmutableList.of(),
+            /* updatedDataFileList= */ ImmutableList.of(),
             inlineFileMap,
-            /* customPropertyOptional = */ Optional.absent(),
+            /* customPropertyOptional= */ Optional.absent(),
             noCustomValidation())
         .get();
 
@@ -3092,9 +3246,9 @@ public class FileGroupManagerTest {
     DataFileGroupInternal fileGroup =
         createDataFileGroup(
             TEST_GROUP,
-            /*fileCount=*/ 2,
-            /*downloadAttemptCount=*/ 3,
-            /*newFilesReceivedTimestamp=*/ testClock.currentTimeMillis() - 500L);
+            /* fileCount= */ 2,
+            /* downloadAttemptCount= */ 3,
+            /* newFilesReceivedTimestamp= */ testClock.currentTimeMillis() - 500L);
     ExtraHttpHeader extraHttpHeader =
         ExtraHttpHeader.newBuilder().setKey("user-agent").setValue("mdd-downloader").build();
 
@@ -3121,6 +3275,27 @@ public class FileGroupManagerTest {
 
     // Verify that downloaded key is written into metadata if download is complete.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.SUCCESS,
+            createFileGroupDetails(fileGroup)
+                .setOwnerPackage(context.getPackageName())
+                .clearFileCount()
+                .build());
+    verify(mockLogger)
+        .logMddDownloadLatency(
+            createFileGroupDetails(fileGroup).build(),
+            createMddDownloadLatency(
+                /* downloadAttemptCount= */ 4,
+                /* downloadLatencyMs= */ 0L,
+                /* totalLatencyMs= */ 500L));
   }
 
   @Test
@@ -3129,9 +3304,9 @@ public class FileGroupManagerTest {
     DataFileGroupInternal fileGroup =
         createDataFileGroup(
             TEST_GROUP,
-            /*fileCount=*/ 2,
-            /*downloadAttemptCount=*/ 3,
-            /*newFilesReceivedTimestamp=*/ testClock.currentTimeMillis() - 500L);
+            /* fileCount= */ 2,
+            /* downloadAttemptCount= */ 3,
+            /* newFilesReceivedTimestamp= */ testClock.currentTimeMillis() - 500L);
     ExtraHttpHeader extraHttpHeader =
         ExtraHttpHeader.newBuilder().setKey("user-agent").setValue("mdd-downloader").build();
 
@@ -3164,6 +3339,30 @@ public class FileGroupManagerTest {
     // Verify that pending key was removed. This will ensure the files are eligible for garbage
     // collection.
     assertThat(readPendingFileGroup(testKey)).isNull();
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+
+    ArgumentCaptor<MddDownloadResult.Code> resultCodeCaptor =
+        ArgumentCaptor.forClass(MddDownloadResult.Code.class);
+    ArgumentCaptor<DataDownloadFileGroupStats> groupDetailsCaptor =
+        ArgumentCaptor.forClass(DataDownloadFileGroupStats.class);
+    verify(mockLogger)
+        .logMddDownloadResult(resultCodeCaptor.capture(), groupDetailsCaptor.capture());
+
+    // Also clearing the file group version number becaused it ends up not being attached since
+    // the pending group was removed.
+    DataDownloadFileGroupStats expectedGroupDetails =
+        createFileGroupDetails(fileGroup).clearFileCount().clearFileGroupVersionNumber().build();
+
+    assertThat(resultCodeCaptor.getAllValues())
+        .containsExactly(MddDownloadResult.Code.CUSTOM_FILEGROUP_VALIDATION_FAILED);
+    assertThat(groupDetailsCaptor.getAllValues()).containsExactly(expectedGroupDetails);
   }
 
   @Test
@@ -3186,7 +3385,7 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.SUBSCRIBED));
 
     // First file failed.
     Uri failingFileUri =
@@ -3230,6 +3429,28 @@ public class FileGroupManagerTest {
 
     // Verify that the pending group is not changed from pending to downloaded.
     assertThat(readDownloadedFileGroup(testKey)).isNull();
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 10,
+            /* variantId= */ "test-variant");
+
+    ArgumentCaptor<MddDownloadResult.Code> resultCodeCaptor =
+        ArgumentCaptor.forClass(MddDownloadResult.Code.class);
+    ArgumentCaptor<DataDownloadFileGroupStats> groupDetailsCaptor =
+        ArgumentCaptor.forClass(DataDownloadFileGroupStats.class);
+    verify(mockLogger)
+        .logMddDownloadResult(resultCodeCaptor.capture(), groupDetailsCaptor.capture());
+
+    DataDownloadFileGroupStats expectedGroupDetails =
+        createFileGroupDetails(fileGroup).clearFileCount().build();
+
+    assertThat(resultCodeCaptor.getAllValues())
+        .containsExactly(MddDownloadResult.Code.LOW_DISK_ERROR);
+    assertThat(groupDetailsCaptor.getAllValues()).containsExactly(expectedGroupDetails);
   }
 
   @Test
@@ -3248,10 +3469,7 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(
-            FileStatus.DOWNLOAD_IN_PROGRESS,
-            FileStatus.DOWNLOAD_IN_PROGRESS,
-            FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.SUBSCRIBED, FileStatus.SUBSCRIBED));
 
     // First file succeeded.
     Uri succeedingFileUri =
@@ -3310,6 +3528,31 @@ public class FileGroupManagerTest {
 
     // Verify that the pending group is not changed from pending to downloaded.
     assertThat(readDownloadedFileGroup(testKey)).isNull();
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+
+    ArgumentCaptor<MddDownloadResult.Code> resultCodeCaptor =
+        ArgumentCaptor.forClass(MddDownloadResult.Code.class);
+    ArgumentCaptor<DataDownloadFileGroupStats> groupDetailsCaptor =
+        ArgumentCaptor.forClass(DataDownloadFileGroupStats.class);
+    verify(mockLogger, times(2))
+        .logMddDownloadResult(resultCodeCaptor.capture(), groupDetailsCaptor.capture());
+
+    DataDownloadFileGroupStats expectedGroupDetails =
+        createFileGroupDetails(fileGroup).clearFileCount().build();
+
+    assertThat(resultCodeCaptor.getAllValues())
+        .containsExactly(
+            MddDownloadResult.Code.DOWNLOAD_TRANSFORM_IO_ERROR,
+            MddDownloadResult.Code.ANDROID_DOWNLOADER_HTTP_ERROR);
+    assertThat(groupDetailsCaptor.getAllValues())
+        .containsExactly(expectedGroupDetails, expectedGroupDetails);
   }
 
   @Test
@@ -3327,7 +3570,7 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_COMPLETE));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.DOWNLOAD_COMPLETE));
 
     // First file failed.
     Uri failingFileUri =
@@ -3341,7 +3584,7 @@ public class FileGroupManagerTest {
             false);
     // The file status is set to DOWNLOAD_FAILED but the downloader returns an immediateVoidFuture.
     // An UNKNOWN_ERROR is logged.
-    fileDownloadFails(keys[0], failingFileUri, /* failureCode = */ null);
+    fileDownloadFails(keys[0], failingFileUri, /* failureCode= */ null);
 
     ListenableFuture<DataFileGroupInternal> downloadFuture =
         fileGroupManager.downloadFileGroup(
@@ -3355,6 +3598,14 @@ public class FileGroupManagerTest {
 
     // Verify that the pending group is not changed from pending to downloaded.
     assertThat(readDownloadedFileGroup(testKey)).isNull();
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
   }
 
   @Test
@@ -3372,12 +3623,14 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_COMPLETE, FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.DOWNLOAD_COMPLETE, FileStatus.SUBSCRIBED));
 
     when(mockDownloader.startDownloading(
+            any(String.class),
             any(GroupKey.class),
             anyInt(),
             anyLong(),
+            any(String.class),
             any(Uri.class),
             any(String.class),
             anyInt(),
@@ -3399,6 +3652,21 @@ public class FileGroupManagerTest {
 
     // Verify that the pending group is not changed from pending to downloaded.
     assertThat(readDownloadedFileGroup(testKey)).isNull();
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.UNKNOWN_ERROR,
+            createFileGroupDetails(fileGroup)
+                .setOwnerPackage(context.getPackageName())
+                .clearFileCount()
+                .build());
   }
 
   @Test
@@ -3446,14 +3714,16 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.SUBSCRIBED));
 
     ArgumentCaptor<DownloadConditions> downloadConditionsCaptor =
         ArgumentCaptor.forClass(DownloadConditions.class);
     when(mockDownloader.startDownloading(
+            any(String.class),
             any(GroupKey.class),
             anyInt(),
             anyLong(),
+            any(String.class),
             any(Uri.class),
             any(String.class),
             anyInt(),
@@ -3508,14 +3778,16 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.SUBSCRIBED));
 
     ArgumentCaptor<DownloadConditions> downloadConditionsCaptor =
         ArgumentCaptor.forClass(DownloadConditions.class);
     when(mockDownloader.startDownloading(
+            any(String.class),
             any(GroupKey.class),
             anyInt(),
             anyLong(),
+            any(String.class),
             any(Uri.class),
             any(String.class),
             anyInt(),
@@ -3610,6 +3882,14 @@ public class FileGroupManagerTest {
         .isEqualTo(testClock.currentTimeMillis());
     // Make sure that the download started count is accumulated.
     assertThat(bookkeeping.getDownloadStartedCount()).isEqualTo(1);
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            fileGroup.getGroupName(),
+            fileGroup.getFileGroupVersionNumber(),
+            /* buildId= */ 0,
+            /* variantId= */ "");
   }
 
   @Test
@@ -3644,6 +3924,14 @@ public class FileGroupManagerTest {
     assertThat(bookkeeping.getGroupDownloadStartedTimestampInMillis()).isEqualTo(123456);
     // Make sure that the download started count is accumulated.
     assertThat(bookkeeping.getDownloadStartedCount()).isEqualTo(3);
+
+    verify(mockLogger, never())
+        .logEventSampled(
+            eq(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED),
+            any(String.class),
+            anyInt(),
+            anyLong(),
+            any(String.class));
   }
 
   @Test
@@ -3690,6 +3978,15 @@ public class FileGroupManagerTest {
     assertThat(bookkeeping.hasGroupDownloadStartedTimestampInMillis()).isTrue();
     assertThat(bookkeeping.getGroupDownloadStartedTimestampInMillis())
         .isEqualTo(testClock.currentTimeMillis());
+
+    verify(mockLogger, never())
+        .logEventSampled(
+            eq(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED),
+            any(String.class),
+            anyInt(),
+            anyLong(),
+            any(String.class));
+    verify(mockLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
   }
 
   @Test
@@ -3699,9 +3996,9 @@ public class FileGroupManagerTest {
     DataFileGroupInternal fileGroup =
         createDataFileGroup(
             TEST_GROUP,
-            /*fileCount=*/ 0,
-            /*downloadAttemptCount=*/ 3,
-            /*newFilesReceivedTimestamp=*/ testClock.currentTimeMillis() - 500L);
+            /* fileCount= */ 0,
+            /* downloadAttemptCount= */ 3,
+            /* newFilesReceivedTimestamp= */ testClock.currentTimeMillis() - 500L);
     ExtraHttpHeader extraHttpHeader =
         ExtraHttpHeader.newBuilder().setKey("user-agent").setValue("mdd-downloader").build();
 
@@ -3730,6 +4027,28 @@ public class FileGroupManagerTest {
 
     // Verify that downloaded key is written into metadata if download is complete.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.SUCCESS,
+            createFileGroupDetails(fileGroup)
+                .setOwnerPackage(context.getPackageName())
+                .clearFileCount()
+                .build());
+
+    verify(mockLogger)
+        .logMddDownloadLatency(
+            createFileGroupDetails(fileGroup).build(),
+            createMddDownloadLatency(
+                /* downloadAttemptCount= */ 4,
+                /* downloadLatencyMs= */ 0L,
+                /* totalLatencyMs= */ 500L));
 
     // exists only called once in tryToShareBeforeDownload
     verify(mockBackend, never()).exists(any());
@@ -3780,6 +4099,13 @@ public class FileGroupManagerTest {
 
     // Verify that downloaded key is written into metadata if download is complete.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 10,
+            /* variantId= */ "test-variant");
 
     verify(mockBackend, never()).exists(blobUri);
     verify(mockBackend, never()).openForWrite(blobUri);
@@ -3789,6 +4115,11 @@ public class FileGroupManagerTest {
     assertThat(sharedFileManager.getSharedFile(keys[1]).get()).isEqualTo(file1);
 
     ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    Void expectedLog = null;
+    assertThat(mddAndroidSharingLog).isEqualTo(expectedLog);
   }
 
   @Test
@@ -3815,7 +4146,7 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.SUBSCRIBED));
 
     // File that can be shared
     DataFile file = fileGroup.getFile(0);
@@ -3835,7 +4166,7 @@ public class FileGroupManagerTest {
             keys[0].getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     fileDownloadSucceeds(keys[0], onDeviceuri);
 
     // Second file's download succeeds
@@ -3847,7 +4178,7 @@ public class FileGroupManagerTest {
             keys[1].getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     fileDownloadSucceeds(keys[1], onDeviceuri);
 
     fileGroupManager
@@ -3859,6 +4190,14 @@ public class FileGroupManagerTest {
 
     // Verify that the downloaded group is still part of downloaded groups prefs.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
 
     verify(mockBackend).exists(blobUri);
     // openForWrite is called only once in tryToShareBeforeDownload for acquiring the lease.
@@ -3881,6 +4220,13 @@ public class FileGroupManagerTest {
             .build();
     assertThat(sharedFileManager.getSharedFile(keys[0]).get()).isEqualTo(expectedSharedFile0);
     assertThat(sharedFileManager.getSharedFile(keys[1]).get()).isEqualTo(expectedSharedFile1);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    Void expectedLog = null;
+    assertThat(mddAndroidSharingLog).isEqualTo(expectedLog);
   }
 
   @Test
@@ -3907,7 +4253,7 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_COMPLETE));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.DOWNLOAD_COMPLETE));
 
     // File that can be shared
     DataFile file = fileGroup.getFile(0);
@@ -3928,13 +4274,15 @@ public class FileGroupManagerTest {
             keys[0].getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
 
     when(mockDownloader.startDownloading(
+            any(String.class),
             any(GroupKey.class),
             anyInt(),
             anyLong(),
+            any(String.class),
             eq(onDeviceuri),
             any(String.class),
             anyInt(),
@@ -3965,6 +4313,13 @@ public class FileGroupManagerTest {
 
     // Verify that downloaded key is written into metadata if download is complete.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
 
     // exists called once in tryToShareBeforeDownload and once in tryToShareAfterDownload
     verify(mockBackend, times(2)).exists(blobUri);
@@ -3989,10 +4344,15 @@ public class FileGroupManagerTest {
     assertThat(sharedFileManager.getSharedFile(keys[0]).get()).isEqualTo(expectedSharedFile0);
     assertThat(sharedFileManager.getSharedFile(keys[1]).get()).isEqualTo(expectedSharedFile1);
 
-    // tryToShareAfterDownload deletes the file
-    assertThat(fileStorage.exists(onDeviceuri)).isFalse();
+    // Local copy has not been deleted.
+    assertThat(fileStorage.exists(onDeviceuri)).isTrue();
 
     ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    Void expectedLog = null;
+    assertThat(mddAndroidSharingLog).isEqualTo(expectedLog);
   }
 
   @Test
@@ -4038,7 +4398,7 @@ public class FileGroupManagerTest {
             keys[0].getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
 
     fileGroupManager
@@ -4050,6 +4410,13 @@ public class FileGroupManagerTest {
 
     // Verify that downloaded key is written into metadata if download is complete.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
 
     // exists only called once in tryToShareBeforeDownload
     verify(mockBackend).exists(blobUri);
@@ -4078,6 +4445,11 @@ public class FileGroupManagerTest {
     onDeviceFile.delete();
 
     ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    Void expectedLog = null;
+    assertThat(mddAndroidSharingLog).isEqualTo(expectedLog);
   }
 
   @Test
@@ -4103,7 +4475,7 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup,
-        ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS, FileStatus.DOWNLOAD_COMPLETE));
+        ImmutableList.of(FileStatus.SUBSCRIBED, FileStatus.DOWNLOAD_COMPLETE));
 
     // File that can be copied to the blob storage
     DataFile file = fileGroup.getFile(0);
@@ -4121,13 +4493,15 @@ public class FileGroupManagerTest {
             keys[0].getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
 
     when(mockDownloader.startDownloading(
+            any(String.class),
             any(GroupKey.class),
             anyInt(),
             anyLong(),
+            any(String.class),
             eq(onDeviceuri),
             any(String.class),
             anyInt(),
@@ -4158,6 +4532,13 @@ public class FileGroupManagerTest {
 
     // Verify that downloaded key is written into metadata if download is complete.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
 
     // exists only called once in tryToShareBeforeDownload, once in tryToShareAfterDownload
     verify(mockBackend, times(2)).exists(blobUri);
@@ -4181,10 +4562,15 @@ public class FileGroupManagerTest {
     assertThat(sharedFileManager.getSharedFile(keys[0]).get()).isEqualTo(expectedSharedFile0);
     assertThat(sharedFileManager.getSharedFile(keys[1]).get()).isEqualTo(expectedSharedFile1);
 
-    // File deleted after being copied to the blob storage.
-    assertThat(fileStorage.exists(onDeviceuri)).isFalse();
+    // Local copy has not been deleted.
+    assertThat(fileStorage.exists(onDeviceuri)).isTrue();
 
     ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    Void expectedLog = null;
+    assertThat(mddAndroidSharingLog).isEqualTo(expectedLog);
   }
 
   @Test
@@ -4205,8 +4591,7 @@ public class FileGroupManagerTest {
     NewFileKey[] keys = MddTestUtil.createFileKeysForDataFileGroupInternal(fileGroup);
     writePendingFileGroup(testKey, fileGroup);
 
-    writeSharedFiles(
-        sharedFilesMetadata, fileGroup, ImmutableList.of(FileStatus.DOWNLOAD_IN_PROGRESS));
+    writeSharedFiles(sharedFilesMetadata, fileGroup, ImmutableList.of(FileStatus.SUBSCRIBED));
 
     DataFile file = fileGroup.getFile(0);
     File onDeviceFile = simulateDownload(file, file.getFileId());
@@ -4218,7 +4603,7 @@ public class FileGroupManagerTest {
             keys[0].getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
 
     fileDownloadSucceeds(keys[0], onDeviceuri);
@@ -4232,6 +4617,13 @@ public class FileGroupManagerTest {
 
     // Verify that downloaded key is written into metadata if download is complete.
     assertThat(readDownloadedFileGroup(testKey)).isNotNull();
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
 
     verify(mockBackend, never()).exists(any());
     verify(mockBackend, never()).openForWrite(any());
@@ -4301,6 +4693,33 @@ public class FileGroupManagerTest {
         expectedSharedFile0.toBuilder().setFileName(fileGroup.getFile(1).getFileId()).build();
     assertThat(sharedFileManager.getSharedFile(keys[0]).get()).isEqualTo(expectedSharedFile0);
     assertThat(sharedFileManager.getSharedFile(keys[1]).get()).isEqualTo(expectedSharedFile1);
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.SUCCESS,
+            DataDownloadFileGroupStats.newBuilder()
+                .setFileGroupName(TEST_GROUP)
+                .setOwnerPackage(context.getPackageName())
+                .setFileGroupVersionNumber(0)
+                .setBuildId(0)
+                .setVariantId("")
+                .build());
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger, times(2))
+        .logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLogBeforeAndAfterDownload = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(
+            mddAndroidSharingLogBeforeAndAfterDownload, mddAndroidSharingLogBeforeAndAfterDownload);
   }
 
   @Test
@@ -4331,7 +4750,7 @@ public class FileGroupManagerTest {
     SharedFile normalSharedFile =
         SharedFile.newBuilder()
             .setFileName(sideloadedGroup.getFile(1).getFileId())
-            .setFileStatus(FileStatus.DOWNLOAD_IN_PROGRESS)
+            .setFileStatus(FileStatus.SUBSCRIBED)
             .build();
     sharedFilesMetadata.write(normalFileKey, normalSharedFile).get();
 
@@ -4343,7 +4762,7 @@ public class FileGroupManagerTest {
             sideloadedGroup.getFile(1).getFileId(),
             sideloadedGroup.getFile(1).getChecksum(),
             mockSilentFeedback,
-            /* instanceId = */ Optional.absent(),
+            /* instanceId= */ Optional.absent(),
             false);
     fileDownloadSucceeds(normalFileKey, normalFileUri);
 
@@ -4356,9 +4775,11 @@ public class FileGroupManagerTest {
 
     verify(mockDownloader)
         .startDownloading(
+            eq(sideloadedGroup.getFile(1).getChecksum()),
             eq(testKey),
             anyInt(),
             anyLong(),
+            any(String.class),
             eq(normalFileUri),
             eq(sideloadedGroup.getFile(1).getUrlToDownload()),
             anyInt(),
@@ -4431,9 +4852,9 @@ public class FileGroupManagerTest {
     DataFileGroupInternal fileGroup1 =
         createDataFileGroup(
             TEST_GROUP,
-            /*fileCount=*/ 2,
-            /*downloadAttemptCount=*/ 7,
-            /*newFilesReceivedTimestamp=*/ testClock.currentTimeMillis() - 500L);
+            /* fileCount= */ 2,
+            /* downloadAttemptCount= */ 7,
+            /* newFilesReceivedTimestamp= */ testClock.currentTimeMillis() - 500L);
     fileGroup1 =
         fileGroup1.toBuilder()
             .setDownloadConditions(DownloadConditions.getDefaultInstance())
@@ -4460,18 +4881,8 @@ public class FileGroupManagerTest {
     GroupKey expectedKey2 = testKey2.toBuilder().setDownloaded(false).build();
     // The file status isn't changed to DOWNLOAD_COMPLETE, it remains DOWNLOAD_IN_PROGRESS.
     //  An UNKNOWN_ERROR is logged.
-    when(mockDownloader.startDownloading(
-            eq(expectedKey2),
-            anyInt(),
-            anyLong(),
-            any(Uri.class),
-            any(String.class),
-            anyInt(),
-            any(DownloadConditions.class),
-            isA(DownloaderCallbackImpl.class),
-            anyInt(),
-            anyList()))
-        .thenReturn(Futures.immediateVoidFuture());
+    when(mockDownloader.getInProgressFuture(any(String.class), any(Uri.class)))
+        .thenReturn(Futures.immediateFuture(Optional.of(Futures.immediateVoidFuture())));
 
     DataFileGroupInternal tmpFileGroup3 = MddTestUtil.createDataFileGroupInternal(TEST_GROUP_3, 2);
     final DataFileGroupInternal fileGroup3 =
@@ -4484,15 +4895,17 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup3,
-        ImmutableList.of(FileStatus.DOWNLOAD_COMPLETE, FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.DOWNLOAD_COMPLETE, FileStatus.DOWNLOAD_FAILED));
 
     GroupKey expectedKey3 = testKey3.toBuilder().setDownloaded(false).build();
-    // One file fails, new status is DOWNLOAD_FAILED but the downloader returns an
+    // One file fails, status is DOWNLOAD_FAILED but the downloader returns an
     // immediateVoidFuture. An UNKNOWN_ERROR is logged.
     when(mockDownloader.startDownloading(
+            any(String.class),
             eq(expectedKey3),
             anyInt(),
             anyLong(),
+            any(String.class),
             any(Uri.class),
             any(String.class),
             anyInt(),
@@ -4513,6 +4926,53 @@ public class FileGroupManagerTest {
             });
 
     fileGroupManager.scheduleAllPendingGroupsForDownload(true, noCustomValidation()).get();
+
+    verify(mockLogger)
+        .logMddDownloadLatency(
+            createFileGroupDetails(fileGroup1).build(),
+            createMddDownloadLatency(
+                /* downloadAttemptCount= */ 8,
+                /* downloadLatencyMs= */ 0L,
+                /* totalLatencyMs= */ 500L));
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_3,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+
+    // Make sure that the successful download of fileGroup1, the failed downloads of fileGroup2 and
+    // fileGroup3 are all logged to clearcut.
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.SUCCESS,
+            createFileGroupDetails(fileGroup1)
+                .setOwnerPackage(context.getPackageName())
+                .clearFileCount()
+                .build());
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.UNKNOWN_ERROR,
+            createFileGroupDetails(fileGroup2)
+                .setOwnerPackage(context.getPackageName())
+                .clearFileCount()
+                .build());
+
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.UNKNOWN_ERROR,
+            createFileGroupDetails(fileGroup3)
+                .setOwnerPackage(context.getPackageName())
+                .clearFileCount()
+                .build());
   }
 
   @Test
@@ -4544,18 +5004,8 @@ public class FileGroupManagerTest {
     fileGroupManager.scheduleAllPendingGroupsForDownload(false, noCustomValidation()).get();
 
     // Only the files in the first group will be downloaded.
-    verify(mockDownloader, times(2))
-        .startDownloading(
-            eq(getPendingKey(testKey)),
-            anyInt(),
-            anyLong(),
-            any(Uri.class),
-            any(String.class),
-            anyInt(),
-            any(DownloadConditions.class),
-            isA(DownloaderCallbackImpl.class),
-            anyInt(),
-            anyList());
+    verify(mockDownloader, times(2)).getInProgressFuture(any(String.class), any(Uri.class));
+
     verifyNoMoreInteractions(mockDownloader);
   }
 
@@ -4590,9 +5040,11 @@ public class FileGroupManagerTest {
       ArgumentCaptor<DownloadConditions> downloadConditionCaptor =
           ArgumentCaptor.forClass(DownloadConditions.class);
       when(mockDownloader.startDownloading(
+              any(String.class),
               any(GroupKey.class),
               anyInt(),
               anyLong(),
+              any(String.class),
               any(Uri.class),
               any(String.class),
               anyInt(),
@@ -4622,7 +5074,7 @@ public class FileGroupManagerTest {
     writeSharedFiles(
         sharedFilesMetadata,
         fileGroup1,
-        ImmutableList.of(FileStatus.DOWNLOAD_COMPLETE, FileStatus.DOWNLOAD_IN_PROGRESS));
+        ImmutableList.of(FileStatus.DOWNLOAD_COMPLETE, FileStatus.SUBSCRIBED));
     NewFileKey[] keys1 = MddTestUtil.createFileKeysForDataFileGroupInternal(fileGroup1);
 
     DataFileGroupInternal fileGroup2 = MddTestUtil.createDataFileGroupInternal(TEST_GROUP_2, 1);
@@ -4643,6 +5095,37 @@ public class FileGroupManagerTest {
     fileDownloadFails(keys1[1], failingFileUri, DownloadResultCode.LOW_DISK_ERROR);
 
     fileGroupManager.scheduleAllPendingGroupsForDownload(true, noCustomValidation()).get();
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.LOW_DISK_ERROR,
+            createFileGroupDetails(fileGroup1)
+                .clearFileCount()
+                .setOwnerPackage(context.getPackageName())
+                .build());
+
+    verify(mockLogger)
+        .logMddDownloadResult(
+            MddDownloadResult.Code.SUCCESS,
+            createFileGroupDetails(fileGroup2)
+                .clearFileCount()
+                .setOwnerPackage(context.getPackageName())
+                .build());
   }
 
   // case 1: the file is already shared in the blob storage.
@@ -4676,6 +5159,14 @@ public class FileGroupManagerTest {
 
     assertThat(sharedFileManager.getSharedFile(newFileKey).get())
         .isEqualTo(existingDownloadedSharedFile);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   // case 2a: the to-be-shared file is available in the blob storage.
@@ -4723,6 +5214,12 @@ public class FileGroupManagerTest {
     assertThat(sharedFileManager.getOnDeviceUri(newFileKey).get()).isEqualTo(blobUri);
 
     ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   // case 3: the to-be-shared file is available in the local storage.
@@ -4768,7 +5265,7 @@ public class FileGroupManagerTest {
             newFileKey.getChecksum(),
             mockSilentFeedback,
             /* instanceId= */ Optional.absent(),
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
 
     fileGroupManager.tryToShareBeforeDownload(fileGroup, file, newFileKey).get();
@@ -4789,6 +5286,13 @@ public class FileGroupManagerTest {
     onDeviceFile.delete();
 
     ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   // The file can't be shared and isn't available locally.
@@ -4823,6 +5327,8 @@ public class FileGroupManagerTest {
 
     SharedFile sharedFile = sharedFileManager.getSharedFile(newFileKey).get();
     assertThat(sharedFile).isEqualTo(existingSharedFile);
+
+    verifyNoInteractions(mockLogger);
   }
 
   // case 4: the non-to-be-shared file can't be shared and is available in the local storage.
@@ -4858,6 +5364,8 @@ public class FileGroupManagerTest {
 
     verify(mockSharedFileManager, never())
         .setAndroidSharedDownloadedFileEntry(any(), any(), anyLong());
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -4906,6 +5414,14 @@ public class FileGroupManagerTest {
 
     SharedFile sharedFile = sharedFileManager.getSharedFile(newFileKey).get();
     assertThat(sharedFile).isEqualTo(existingSharedFile);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -4950,6 +5466,14 @@ public class FileGroupManagerTest {
     // openForWrite is called only once for acquiring the lease.
     verify(mockBackend, never()).openForWrite(blobUri);
     verify(mockBackend).openForWrite(leaseUri);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -4987,6 +5511,13 @@ public class FileGroupManagerTest {
     assertThat(sharedFile).isEqualTo(existingSharedFile);
 
     ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5030,6 +5561,14 @@ public class FileGroupManagerTest {
     SharedFile sharedFile = sharedFileManager.getSharedFile(newFileKey).get();
     // Since there was an exception, the existing shared file didn't update the expiration date.
     assertThat(sharedFile).isEqualTo(existingSharedFile);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5059,6 +5598,8 @@ public class FileGroupManagerTest {
 
     SharedFile sharedFile = sharedFileManager.getSharedFile(newFileKey).get();
     assertThat(sharedFile).isEqualTo(existingSharedFile);
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -5100,6 +5641,14 @@ public class FileGroupManagerTest {
     assertThat(sharedFile.getMaxExpirationDateSecs()).isEqualTo(FILE_GROUP_EXPIRATION_DATE_SECS);
     assertThat(sharedFile.getAndroidShared()).isTrue();
     assertThat(sharedFileManager.getOnDeviceUri(newFileKey).get()).isEqualTo(blobUri);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5153,8 +5702,16 @@ public class FileGroupManagerTest {
     assertThat(sharedFile.getAndroidShared()).isTrue();
     assertThat(sharedFileManager.getOnDeviceUri(newFileKey).get()).isEqualTo(blobUri);
 
-    // Local copy has been deleted.
-    assertThat(fileStorage.exists(onDeviceuri)).isFalse();
+    // Local copy has not been deleted.
+    assertThat(fileStorage.exists(onDeviceuri)).isTrue();
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5211,8 +5768,16 @@ public class FileGroupManagerTest {
     assertThat(sharedFile.getAndroidShared()).isTrue();
     assertThat(sharedFileManager.getOnDeviceUri(newFileKey).get()).isEqualTo(blobUri);
 
-    // Local copy has been deleted.
-    assertThat(fileStorage.exists(onDeviceuri)).isFalse();
+    // Local copy has not been deleted.
+    assertThat(fileStorage.exists(onDeviceuri)).isTrue();
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5264,6 +5829,8 @@ public class FileGroupManagerTest {
     // Local copy still available.
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
     onDeviceFile.delete();
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -5318,6 +5885,15 @@ public class FileGroupManagerTest {
     // Local copy still available.
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
     onDeviceFile.delete();
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5365,6 +5941,14 @@ public class FileGroupManagerTest {
 
     SharedFile sharedFile = sharedFileManager.getSharedFile(newFileKey).get();
     assertThat(sharedFile).isEqualTo(existingSharedFile);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5383,6 +5967,14 @@ public class FileGroupManagerTest {
 
     ExecutionException exception = assertThrows(ExecutionException.class, tryToShareFuture::get);
     assertThat(exception).hasCauseThat().isInstanceOf(SharedFileMissingException.class);
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
 
     verify(mockBackend, never()).exists(any());
     verify(mockBackend, never()).openForWrite(any());
@@ -5441,6 +6033,13 @@ public class FileGroupManagerTest {
         .updateMaxExpirationDateSecs(newFileKey, FILE_GROUP_EXPIRATION_DATE_SECS);
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
     onDeviceFile.delete();
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5503,6 +6102,14 @@ public class FileGroupManagerTest {
     verify(mockSharedFileManager).updateMaxExpirationDateSecs(newFileKey, 0);
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
     onDeviceFile.delete();
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5557,6 +6164,14 @@ public class FileGroupManagerTest {
     // Local copy still available.
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
     onDeviceFile.delete();
+
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
+
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5622,47 +6237,14 @@ public class FileGroupManagerTest {
     // Local copy still available.
     assertThat(fileStorage.exists(onDeviceuri)).isTrue();
     onDeviceFile.delete();
-  }
 
-  @Test
-  public void tryToShareAfterDownload_blobExists_deleteLocalCopyFails() throws Exception {
-    // Create a file group with expiration date bigger than the expiration date of the existing
-    // SharedFile.
-    DataFileGroupInternal fileGroup =
-        MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 1).toBuilder()
-            .setExpirationDateSecs(FILE_GROUP_EXPIRATION_DATE_SECS)
-            .setDownloadConditions(DownloadConditions.getDefaultInstance())
-            .build();
+    ArgumentCaptor<Void> mddAndroidSharingLogArgumentCaptor = ArgumentCaptor.forClass(Void.class);
+    verify(mockLogger).logMddAndroidSharingLog(mddAndroidSharingLogArgumentCaptor.capture());
 
-    DataFile file = MddTestUtil.createSharedDataFile("fileId", 0);
-    NewFileKey newFileKey =
-        SharedFilesMetadata.createKeyFromDataFile(file, AllowedReaders.ALL_GOOGLE_APPS);
-    SharedFile existingSharedFile =
-        SharedFile.newBuilder()
-            .setFileStatus(FileStatus.DOWNLOAD_COMPLETE)
-            .setFileName("fileName")
-            .setAndroidShared(false)
-            .build();
-    sharedFilesMetadata.write(newFileKey, existingSharedFile).get();
-
-    Uri blobUri = DirectoryUtil.getBlobUri(context, file.getAndroidSharingChecksum());
-    Uri leaseUri =
-        DirectoryUtil.getBlobStoreLeaseUri(
-            context, file.getAndroidSharingChecksum(), FILE_GROUP_EXPIRATION_DATE_SECS);
-    // The file is available in the blob storage
-    when(mockBackend.exists(blobUri)).thenReturn(true);
-
-    fileGroupManager.tryToShareAfterDownload(fileGroup, file, newFileKey).get();
-
-    // openForWrite is called only once for acquiring the lease.
-    verify(mockBackend).exists(blobUri);
-    verify(mockBackend).openForWrite(leaseUri);
-
-    SharedFile sharedFile = sharedFileManager.getSharedFile(newFileKey).get();
-    // Verify that the SharedFile has updated its expiration date after the download.
-    assertThat(sharedFile.getMaxExpirationDateSecs()).isEqualTo(FILE_GROUP_EXPIRATION_DATE_SECS);
-    assertThat(sharedFile.getAndroidShared()).isTrue();
-    assertThat(sharedFileManager.getOnDeviceUri(newFileKey).get()).isEqualTo(blobUri);
+    Void mddAndroidSharingLog = null;
+    assertThat(mddAndroidSharingLogArgumentCaptor.getAllValues())
+        .containsExactly(mddAndroidSharingLog);
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -5687,12 +6269,22 @@ public class FileGroupManagerTest {
 
     assertThat(
             fileGroupManager
-                .verifyPendingGroupDownloaded(testKey, fileGroup1, noCustomValidation())
+                .verifyGroupDownloaded(
+                    testKey,
+                    fileGroup1,
+                    /* removePendingVersion= */ true,
+                    noCustomValidation(),
+                    DownloadStateLogger.forDownload(mockLogger))
                 .get())
         .isEqualTo(GroupDownloadStatus.PENDING);
     assertThat(
             fileGroupManager
-                .verifyPendingGroupDownloaded(testKey2, fileGroup2, noCustomValidation())
+                .verifyGroupDownloaded(
+                    testKey2,
+                    fileGroup2,
+                    /* removePendingVersion= */ true,
+                    noCustomValidation(),
+                    DownloadStateLogger.forDownload(mockLogger))
                 .get())
         .isEqualTo(GroupDownloadStatus.DOWNLOADED);
 
@@ -5708,6 +6300,21 @@ public class FileGroupManagerTest {
     // Verify that the completely downloaded group is written into metadata.
     DataFileGroupInternal downloadedGroup2 = readDownloadedFileGroup(testKey2);
     assertThat(downloadedGroup2).isEqualTo(fileGroup2);
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
   }
 
   @Test
@@ -5743,6 +6350,21 @@ public class FileGroupManagerTest {
     // Verify that the completely downloaded group is written into metadata.
     DataFileGroupInternal downloadedGroup2 = readDownloadedFileGroup(testKey2);
     assertThat(downloadedGroup2).isEqualTo(fileGroup2);
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
   }
 
   @Test
@@ -5797,6 +6419,21 @@ public class FileGroupManagerTest {
     DataFileGroupInternal downloadedGroup4 = readDownloadedFileGroup(testKey3);
     assertThat(downloadedGroup4).isEqualTo(fileGroup4);
 
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+
     // fileGroup3 should have been scheduled for deletion.
     fileGroup3 =
         fileGroup3.toBuilder()
@@ -5833,6 +6470,21 @@ public class FileGroupManagerTest {
     fileGroup2 = FileGroupUtil.setDownloadedTimestampInMillis(fileGroup2, 1000);
     DataFileGroupInternal downloadedGroup2 = readDownloadedFileGroup(testKey2);
     assertThat(downloadedGroup2).isEqualTo(fileGroup2);
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
   }
 
   @Test
@@ -5917,6 +6569,8 @@ public class FileGroupManagerTest {
 
     assertThat(fileGroupsMetadata.getAllGroupKeys().get())
         .containsExactly(getDownloadedKey(key1), getDownloadedKey(key2), getDownloadedKey(key3));
+
+    verifyNoInteractions(mockLogger);
   }
 
   @Test
@@ -5957,6 +6611,15 @@ public class FileGroupManagerTest {
 
     assertThat(fileGroupsMetadata.getAllGroupKeys().get())
         .containsExactly(getDownloadedKey(key1), getDownloadedKey(key3));
+
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -6013,6 +6676,22 @@ public class FileGroupManagerTest {
               pendingGroupKeyWithFileMissing,
               groupKeyWithNoFileMissing);
     }
+
+    verify(mockLogger, times(2))
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verify(mockLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP_2,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
+    verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
@@ -6085,6 +6764,117 @@ public class FileGroupManagerTest {
         .isEqualTo("android");
   }
 
+  @Test
+  public void testAddGroupForDownload_withExperimentationConfig() throws Exception {
+    flags.enableDownloadStageExperimentIdPropagation = Optional.of(true);
+
+    Long buildId = 999L;
+    Integer experimentId = 12345;
+    DataFileGroupInternal dataFileGroup =
+        MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
+            .setBuildId(buildId)
+            .build();
+
+    assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
+  }
+
+  @Test
+  public void testAddGroupForDownload_withExperimentationConfig_overwritesPendingExperimentIds()
+      throws Exception {
+    flags.enableDownloadStageExperimentIdPropagation = Optional.of(true);
+
+    long buildId = 999L;
+    long buildId2 = 100L;
+    int experimentId = 12345;
+    int experimentId2 = 23456;
+
+    DataFileGroupInternal dataFileGroup =
+        MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
+            .setBuildId(buildId)
+            .build();
+
+    DataFileGroupInternal dataFileGroup2 =
+        MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
+            .setBuildId(buildId2)
+            .build();
+
+    assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
+    // Overwrite the group. The old experiment id should be deleted and the new experiment id should
+    // be populated.
+    assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup2).get()).isTrue();
+  }
+
+  @Test
+  public void testDownloadPendingGroup_withExperimentationConfig_updatesExperimentIdToDownloaded()
+      throws Exception {
+    flags.enableDownloadStageExperimentIdPropagation = Optional.of(true);
+
+    int experimentIdDownloading = 12345;
+    int experimentIdDownloaded = 23456;
+    long buildId = 999L;
+
+    ExtraHttpHeader extraHttpHeader =
+        ExtraHttpHeader.newBuilder().setKey("user-agent").setValue("mdd-downloader").build();
+
+    // Write 1 group to the pending shared prefs.
+    DataFileGroupInternal fileGroup =
+        createDataFileGroup(
+                TEST_GROUP,
+                /* fileCount= */ 2,
+                /* downloadAttemptCount= */ 3,
+                /* newFilesReceivedTimestamp= */ testClock.currentTimeMillis() - 500L)
+            .toBuilder()
+            .setBuildId(buildId)
+            .setOwnerPackage(context.getPackageName())
+            .setDownloadConditions(DownloadConditions.getDefaultInstance())
+            .setTrafficTag(TRAFFIC_TAG)
+            .addGroupExtraHttpHeaders(extraHttpHeader)
+            .build();
+
+    writePendingFileGroup(testKey, fileGroup);
+
+    writeSharedFiles(
+        sharedFilesMetadata,
+        fileGroup,
+        ImmutableList.of(FileStatus.DOWNLOAD_COMPLETE, FileStatus.DOWNLOAD_COMPLETE));
+
+    fileGroupManager
+        .downloadFileGroup(testKey, DownloadConditions.getDefaultInstance(), noCustomValidation())
+        .get();
+  }
+
+  @Test
+  public void testRemoveFileGroup_withExperimentationConfig_removesExperimentIds()
+      throws Exception {
+    flags.enableDownloadStageExperimentIdPropagation = Optional.of(true);
+
+    long buildId = 999L;
+    int experimentId = 12345;
+    DataFileGroupInternal dataFileGroup =
+        MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
+            .setBuildId(buildId)
+            .build();
+
+    assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
+    fileGroupManager.removeFileGroup(testKey, /* pendingOnly= */ false).get();
+  }
+
+  @Test
+  public void testRemoveFileGroups_withExperimentationConfig_removesExperimentIds()
+      throws Exception {
+    flags.enableDownloadStageExperimentIdPropagation = Optional.of(true);
+
+    long buildId = 999L;
+    int experimentId = 12345;
+    DataFileGroupInternal dataFileGroup =
+        MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
+            .setBuildId(buildId)
+            .build();
+
+    assertThat(fileGroupManager.addGroupForDownload(testKey, dataFileGroup).get()).isTrue();
+    fileGroupManager.removeFileGroups(ImmutableList.of(testKey)).get();
+  }
+
   /**
    * Re-instantiates {@code fileGroupManager} with the injected parameters.
    *
@@ -6092,10 +6882,18 @@ public class FileGroupManagerTest {
    */
   private void resetFileGroupManager(
       FileGroupsMetadata fileGroupsMetadata, SharedFileManager sharedFileManager) throws Exception {
+    resetFileGroupManager(this.mockLogger, fileGroupsMetadata, sharedFileManager);
+  }
+
+  private void resetFileGroupManager(
+      EventLogger eventLogger,
+      FileGroupsMetadata fileGroupsMetadata,
+      SharedFileManager sharedFileManager)
+      throws Exception {
     fileGroupManager =
         new FileGroupManager(
             context,
-            mockLogger,
+            eventLogger,
             mockSilentFeedback,
             fileGroupsMetadata,
             sharedFileManager,
@@ -6108,8 +6906,15 @@ public class FileGroupManagerTest {
             flags);
   }
 
-  private static Void createFileGroupDetails(DataFileGroupInternal fileGroup) {
-    return null;
+  private static DataDownloadFileGroupStats.Builder createFileGroupDetails(
+      DataFileGroupInternal fileGroup) {
+    return DataDownloadFileGroupStats.newBuilder()
+        .setOwnerPackage(fileGroup.getOwnerPackage())
+        .setFileGroupName(fileGroup.getGroupName())
+        .setFileGroupVersionNumber(fileGroup.getFileGroupVersionNumber())
+        .setBuildId(fileGroup.getBuildId())
+        .setVariantId(fileGroup.getVariantId())
+        .setFileCount(fileGroup.getFileCount());
   }
 
   private static Void createMddDownloadLatency(
@@ -6130,9 +6935,11 @@ public class FileGroupManagerTest {
   /** The file download succeeds so the new file status is DOWNLOAD_COMPLETE. */
   private void fileDownloadSucceeds(NewFileKey key, Uri fileUri) {
     when(mockDownloader.startDownloading(
+            any(String.class),
             any(GroupKey.class),
             anyInt(),
             anyLong(),
+            any(String.class),
             eq(fileUri),
             any(String.class),
             anyInt(),
@@ -6160,9 +6967,11 @@ public class FileGroupManagerTest {
    */
   private void fileDownloadFails(NewFileKey key, Uri fileUri, DownloadResultCode failureCode) {
     when(mockDownloader.startDownloading(
+            any(String.class),
             any(GroupKey.class),
             anyInt(),
             anyLong(),
+            any(String.class),
             eq(fileUri),
             any(String.class),
             anyInt(),
@@ -6262,8 +7071,8 @@ public class FileGroupManagerTest {
               dataFile.getFileId(),
               newFileKey.getChecksum(),
               mockSilentFeedback,
-              /* instanceId = */ Optional.absent(),
-              /* androidShared = */ false));
+              /* instanceId= */ Optional.absent(),
+              /* androidShared= */ false));
     }
     return uriList;
   }

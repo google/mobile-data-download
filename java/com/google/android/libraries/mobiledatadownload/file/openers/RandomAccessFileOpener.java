@@ -36,7 +36,7 @@ public final class RandomAccessFileOpener implements Opener<RandomAccessFile> {
   }
 
   public static RandomAccessFileOpener createForRead() {
-    return new RandomAccessFileOpener(/*writeSupport=*/ false);
+    return new RandomAccessFileOpener(/* writeSupport= */ false);
   }
 
   /**
@@ -44,7 +44,7 @@ public final class RandomAccessFileOpener implements Opener<RandomAccessFile> {
    * parent directories do not exist, they will be created.
    */
   public static RandomAccessFileOpener createForReadWrite() {
-    return new RandomAccessFileOpener(/*writeSupport=*/ true);
+    return new RandomAccessFileOpener(/* writeSupport= */ true);
   }
 
   @Override

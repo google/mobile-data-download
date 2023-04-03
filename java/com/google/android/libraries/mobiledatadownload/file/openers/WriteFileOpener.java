@@ -22,6 +22,7 @@ import com.google.android.libraries.mobiledatadownload.file.Opener;
 import com.google.android.libraries.mobiledatadownload.file.common.FileConvertible;
 import com.google.android.libraries.mobiledatadownload.file.common.ReleasableResource;
 import com.google.android.libraries.mobiledatadownload.file.openers.WriteFileOpener.FileCloser;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
@@ -148,6 +149,7 @@ public final class WriteFileOpener implements Opener<FileCloser> {
    * @param context Android context for the root directory where fifos are stored.
    * @return This opener.
    */
+  @CanIgnoreReturnValue
   public WriteFileOpener withFallbackToPipeUsingExecutor(
       ExecutorService executor, Context context) {
     this.executor = executor;

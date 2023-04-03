@@ -14,7 +14,17 @@
 # Description:
 #   Standalone Android library for downloading and managing files on device.
 
-package(default_visibility = ["//:__subpackages__"])
+load("//tools/build_defs/license:license.bzl", "license")
+
+package(
+    default_applicable_licenses = ["//:license"],
+    default_visibility = ["//:__subpackages__"],
+)
+
+license(
+    name = "license",
+    package_name = "mobiledatadownload",
+)
 
 licenses(["notice"])
 

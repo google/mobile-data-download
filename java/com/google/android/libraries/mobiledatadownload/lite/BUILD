@@ -16,6 +16,7 @@ load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 # MDD Lite visibility is restricted to the following set of packages. Any
 # new clients must be added to this list in order to grant build visibility.
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -37,11 +38,15 @@ android_library(
         ":DownloadProgressMonitor",
         "//java/com/google/android/libraries/mobiledatadownload:DownloadException",
         "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
+        "//java/com/google/android/libraries/mobiledatadownload/foreground:ForegroundDownloadKey",
         "//java/com/google/android/libraries/mobiledatadownload/foreground:NotificationUtil",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/util:DownloadFutureMap",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "@androidx_core_core",
         "@com_google_auto_value",
-        "@com_google_dagger",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
         "@org_checkerframework_qual",
     ],
@@ -66,9 +71,11 @@ android_library(
         ":DownloadListener",
         "//java/com/google/android/libraries/mobiledatadownload:TimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "//java/com/google/android/libraries/mobiledatadownload/internal:AndroidTimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "@androidx_annotation_annotation",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )

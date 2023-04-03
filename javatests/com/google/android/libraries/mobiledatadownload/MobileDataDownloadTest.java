@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -36,7 +37,6 @@ import static org.mockito.Mockito.when;
 import android.accounts.Account;
 import android.content.Context;
 import android.net.Uri;
-import android.util.Pair;
 import androidx.test.core.app.ApplicationProvider;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.TaskScheduler.ConstraintOverrides;
@@ -46,10 +46,14 @@ import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStora
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
 import com.google.android.libraries.mobiledatadownload.file.openers.WriteStreamOpener;
 import com.google.android.libraries.mobiledatadownload.internal.MobileDataDownloadManager;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
+import com.google.android.libraries.mobiledatadownload.internal.logging.testing.FakeEventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.util.ProtoConversionUtil;
 import com.google.android.libraries.mobiledatadownload.lite.Downloader;
 import com.google.android.libraries.mobiledatadownload.monitor.DownloadProgressMonitor;
+import com.google.android.libraries.mobiledatadownload.testing.FakeTimeSource;
+import com.google.android.libraries.mobiledatadownload.testing.TestFlags;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -57,6 +61,7 @@ import com.google.common.labs.concurrent.LabsFutures;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFile;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
@@ -65,6 +70,7 @@ import com.google.mobiledatadownload.DownloadConfigProto.DataFile;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions.DeviceNetworkPolicy;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import com.google.mobiledatadownload.internal.MetadataProto;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
@@ -77,12 +83,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -97,9 +103,7 @@ import org.robolectric.RobolectricTestRunner;
 /** Tests for {@link com.google.android.libraries.mobiledatadownload.MobileDataDownload}. */
 @RunWith(RobolectricTestRunner.class)
 public class MobileDataDownloadTest {
-  // Note: Control Executor must not be a single thread executor.
-  private static final Executor EXECUTOR = Executors.newCachedThreadPool();
-  private static final long LATCH_WAIT_TIME_MS = 1000L;
+  private static final Context context = ApplicationProvider.getApplicationContext();
 
   private static final String FILE_GROUP_NAME_1 = "test-group-1";
   private static final String FILE_GROUP_NAME_2 = "test-group-2";
@@ -112,6 +116,28 @@ public class MobileDataDownloadTest {
   private static final String FILE_CHECKSUM_2 = "a1cba9d87b1440f41ce9e7da38c43e1f6bd7d5df";
   private static final String FILE_URL_2 = "https://www.gstatic.com/suggest-dev/odws1_empty.jar";
   private static final int FILE_SIZE_2 = 554;
+
+  private static final DataFileGroup FILE_GROUP_1 =
+      createDataFileGroup(
+          FILE_GROUP_NAME_1,
+          context.getPackageName(),
+          /* versionNumber= */ 1,
+          new String[] {FILE_ID_1},
+          new int[] {FILE_SIZE_1},
+          new String[] {FILE_CHECKSUM_1},
+          new String[] {FILE_URL_1},
+          DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
+
+  private static final DataFileGroupInternal FILE_GROUP_INTERNAL_1 =
+      createDataFileGroupInternal(
+          FILE_GROUP_NAME_1,
+          context.getPackageName(),
+          /* versionNumber= */ 5,
+          new String[] {FILE_ID_1},
+          new int[] {FILE_SIZE_1},
+          new String[] {FILE_CHECKSUM_1},
+          new String[] {FILE_URL_1},
+          DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
 
   private final Uri onDeviceUri1 =
       Uri.parse(
@@ -132,9 +158,10 @@ public class MobileDataDownloadTest {
           "android://com.google.android.libraries.mobiledatadownload/files/datadownload/shared/public/dir/sub/file");
   private final String onDeviceDirFile3Content = "Test file 3 in sub-dir.";
 
-  private final Flags flags = new Flags() {};
-  private Context context;
+  private final TestFlags flags = new TestFlags();
   private SynchronousFileStorage fileStorage;
+  private FakeTimeSource timeSource;
+  private FakeEventLogger fakeEventLogger;
 
   @Mock EventLogger mockEventLogger;
   @Mock MobileDataDownloadManager mockMobileDataDownloadManager;
@@ -146,19 +173,42 @@ public class MobileDataDownloadTest {
   @Captor ArgumentCaptor<GroupKey> groupKeyCaptor;
   @Captor ArgumentCaptor<List<GroupKey>> groupKeysCaptor;
 
+  // Note: Executor must not be a single thread executor.
+  ListeningExecutorService controlExecutor =
+      MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
+
   @Rule public final MockitoRule mocks = MockitoJUnit.rule();
 
   @Before
   public void setUp() throws IOException {
-    context = ApplicationProvider.getApplicationContext();
     fileStorage =
         new SynchronousFileStorage(
             ImmutableList.of(AndroidFileBackend.builder(context).build()) /*backends*/);
     createFile(onDeviceUri1, "test");
-    fileStorage.createDirectory(onDeviceDirUri);
+    if (!fileStorage.exists(onDeviceDirUri)) {
+      fileStorage.createDirectory(onDeviceDirUri);
+    }
     createFile(onDeviceDirFileUri1, onDeviceDirFile1Content);
     createFile(onDeviceDirFileUri2, onDeviceDirFile2Content);
     createFile(onDeviceDirFileUri3, onDeviceDirFile3Content);
+    timeSource = new FakeTimeSource();
+    fakeEventLogger = new FakeEventLogger();
+  }
+
+  @After
+  public void tearDown() throws Exception {
+    if (fileStorage.exists(onDeviceUri1)) {
+      fileStorage.deleteFile(onDeviceUri1);
+    }
+    if (fileStorage.exists(onDeviceDirFileUri1)) {
+      fileStorage.deleteFile(onDeviceDirFileUri1);
+    }
+    if (fileStorage.exists(onDeviceDirFileUri2)) {
+      fileStorage.deleteFile(onDeviceDirFileUri2);
+    }
+    if (fileStorage.exists(onDeviceDirFileUri3)) {
+      fileStorage.deleteFile(onDeviceDirFileUri3);
+    }
   }
 
   private void createFile(Uri uri, String content) throws IOException {
@@ -166,6 +216,8 @@ public class MobileDataDownloadTest {
       out.write(content.getBytes(UTF_8));
     }
   }
+
+  private void expectErrorLogMessage(String message) {}
 
   @Test
   public void buildGetFileGroupsByFilterRequest() throws Exception {
@@ -208,23 +260,13 @@ public class MobileDataDownloadTest {
     when(mockMobileDataDownloadManager.addGroupForDownloadInternal(
             any(GroupKey.class), any(DataFileGroupInternal.class), any()))
         .thenReturn(Futures.immediateFuture(true));
-    DataFileGroup dataFileGroup =
-        createDataFileGroup(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            1 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -232,12 +274,13 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     assertThat(
             mobileDataDownload
                 .addFileGroup(
-                    AddFileGroupRequest.newBuilder().setDataFileGroup(dataFileGroup).build())
+                    AddFileGroupRequest.newBuilder().setDataFileGroup(FILE_GROUP_1).build())
                 .get())
         .isTrue();
   }
@@ -247,23 +290,13 @@ public class MobileDataDownloadTest {
     when(mockMobileDataDownloadManager.addGroupForDownloadInternal(
             any(GroupKey.class), any(DataFileGroupInternal.class), any()))
         .thenReturn(Futures.immediateFuture(false));
-    DataFileGroup dataFileGroup =
-        createDataFileGroup(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            1 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -271,12 +304,13 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     assertThat(
             mobileDataDownload
                 .addFileGroup(
-                    AddFileGroupRequest.newBuilder().setDataFileGroup(dataFileGroup).build())
+                    AddFileGroupRequest.newBuilder().setDataFileGroup(FILE_GROUP_1).build())
                 .get())
         .isFalse();
   }
@@ -304,7 +338,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             null /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -312,8 +346,12 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
+    expectErrorLogMessage(
+        "MobileDataDownload: Added group = 'test-group-1' with wrong owner package:"
+            + " 'com.google.android.libraries.mobiledatadownload' v.s. 'PACKAGE_NAME' ");
     assertThat(
             mobileDataDownload
                 .addFileGroup(
@@ -329,23 +367,12 @@ public class MobileDataDownloadTest {
             groupKeyCaptor.capture(), any(DataFileGroupInternal.class), any()))
         .thenReturn(Futures.immediateFuture(true));
 
-    DataFileGroup dataFileGroup =
-        createDataFileGroup(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            1 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
-
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -353,12 +380,13 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     Account account = AccountUtil.create("account-name", "account-type");
     AddFileGroupRequest addFileGroupRequest =
         AddFileGroupRequest.newBuilder()
-            .setDataFileGroup(dataFileGroup)
+            .setDataFileGroup(FILE_GROUP_1)
             .setAccountOptional(Optional.of(account))
             .build();
 
@@ -373,7 +401,7 @@ public class MobileDataDownloadTest {
     assertThat(groupKeyCaptor.getValue()).isEqualTo(groupKey);
     verify(mockMobileDataDownloadManager)
         .addGroupForDownloadInternal(
-            eq(groupKey), eq(ProtoConversionUtil.convert(dataFileGroup)), any());
+            eq(groupKey), eq(ProtoConversionUtil.convert(FILE_GROUP_1)), any());
   }
 
   @Test
@@ -383,23 +411,12 @@ public class MobileDataDownloadTest {
             groupKeyCaptor.capture(), any(DataFileGroupInternal.class), any()))
         .thenReturn(Futures.immediateFuture(false));
 
-    DataFileGroup dataFileGroup =
-        createDataFileGroup(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            1 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
-
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -407,12 +424,13 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     Account account = AccountUtil.create("account-name", "account-type");
     AddFileGroupRequest addFileGroupRequest =
         AddFileGroupRequest.newBuilder()
-            .setDataFileGroup(dataFileGroup)
+            .setDataFileGroup(FILE_GROUP_1)
             .setAccountOptional(Optional.of(account))
             .build();
 
@@ -427,7 +445,7 @@ public class MobileDataDownloadTest {
     assertThat(groupKeyCaptor.getValue()).isEqualTo(groupKey);
     verify(mockMobileDataDownloadManager)
         .addGroupForDownloadInternal(
-            eq(groupKey), eq(ProtoConversionUtil.convert(dataFileGroup)), any());
+            eq(groupKey), eq(ProtoConversionUtil.convert(FILE_GROUP_1)), any());
   }
 
   @Test
@@ -453,7 +471,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -461,7 +479,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     AddFileGroupRequest addFileGroupRequest =
         AddFileGroupRequest.newBuilder().setDataFileGroup(dataFileGroup).build();
@@ -480,62 +499,6 @@ public class MobileDataDownloadTest {
   }
 
   @Test
-  public void addFileGroupWithFileGroupKey_withVariant() throws Exception {
-    ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
-    when(mockMobileDataDownloadManager.addGroupForDownloadInternal(
-            groupKeyCaptor.capture(), any(), any()))
-        .thenReturn(Futures.immediateFuture(true));
-
-    DataFileGroup dataFileGroupWithVariant =
-        createDataFileGroup(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                1 /* versionNumber */,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .setVariantId("en")
-            .build();
-
-    MobileDataDownload mobileDataDownload =
-        new MobileDataDownloadImpl(
-            context,
-            mockEventLogger,
-            mockMobileDataDownloadManager,
-            EXECUTOR,
-            ImmutableList.of() /* fileGroupPopulatorList */,
-            Optional.of(mockTaskScheduler),
-            fileStorage,
-            Optional.absent() /* downloadMonitorOptional */,
-            Optional.of(this.getClass()), // don't need to use the real foreground download service.
-            flags,
-            singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
-
-    AddFileGroupRequest addFileGroupRequest =
-        AddFileGroupRequest.newBuilder()
-            .setDataFileGroup(dataFileGroupWithVariant)
-            .setVariantIdOptional(Optional.of("en"))
-            .build();
-
-    assertThat(mobileDataDownload.addFileGroup(addFileGroupRequest).get()).isTrue();
-
-    GroupKey groupKey =
-        GroupKey.newBuilder()
-            .setGroupName(FILE_GROUP_NAME_1)
-            .setOwnerPackage(context.getPackageName())
-            .setVariantId("en")
-            .build();
-    assertThat(groupKeyCaptor.getValue()).isEqualTo(groupKey);
-    verify(mockMobileDataDownloadManager)
-        .addGroupForDownloadInternal(
-            eq(groupKey), eq(ProtoConversionUtil.convert(dataFileGroupWithVariant)), any());
-  }
-
-  @Test
   public void removeFileGroup_onSuccess_returnsTrue() throws Exception {
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.removeFileGroup(groupKeyCaptor.capture(), eq(false)))
@@ -546,7 +509,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -554,7 +517,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     RemoveFileGroupRequest removeFileGroupRequest =
         RemoveFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build();
@@ -581,7 +545,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -589,7 +553,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     RemoveFileGroupRequest removeFileGroupRequest =
         RemoveFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build();
@@ -620,7 +585,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -628,7 +593,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     Account account = AccountUtil.create("account-name", "account-type");
     RemoveFileGroupRequest removeFileGroupRequest =
@@ -660,7 +626,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -668,7 +634,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     RemoveFileGroupRequest removeFileGroupRequest =
         RemoveFileGroupRequest.newBuilder()
@@ -690,30 +657,20 @@ public class MobileDataDownloadTest {
   @Test
   public void getFileGroup() throws Exception {
     DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                5 /* versionNumber */,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .setBuildId(10)
-            .setVariantId("test-variant")
-            .build();
+        FILE_GROUP_INTERNAL_1.toBuilder().setBuildId(10).setVariantId("test-variant").build();
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -721,7 +678,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -740,27 +698,20 @@ public class MobileDataDownloadTest {
 
   @Test
   public void getFileGroup_withDirectory() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceDirUri));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceDirUri)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -768,7 +719,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -806,27 +758,20 @@ public class MobileDataDownloadTest {
 
   @Test
   public void getFileGroup_withDirectory_withTraverseDisabled() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceDirUri));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceDirUri)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -834,7 +779,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -864,34 +810,13 @@ public class MobileDataDownloadTest {
   @Test
   public void removeFileGroupsByFilter_withAccountSpecified_removesMatchingAccountGroups()
       throws Exception {
-    List<Pair<GroupKey, DataFileGroupInternal>> keyToGroupList = new ArrayList<>();
+    List<GroupKeyAndGroup> keyToGroupList = new ArrayList<>();
     Account account1 = AccountUtil.create("account-name", "account-type");
     Account account2 = AccountUtil.create("account-name2", "account-type");
 
-    DataFileGroupInternal downloadedFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                /* versionNumber = */ 5,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .build();
+    DataFileGroupInternal downloadedFileGroup = FILE_GROUP_INTERNAL_1.toBuilder().build();
     DataFileGroupInternal pendingFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                /* versionNumber = */ 6,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .build();
+        FILE_GROUP_INTERNAL_1.toBuilder().setFileGroupVersionNumber(6).build();
 
     GroupKey account1GroupKey =
         GroupKey.newBuilder()
@@ -919,12 +844,12 @@ public class MobileDataDownloadTest {
     GroupKey downloadedGroupKey = noAccountGroupKey.toBuilder().setDownloaded(true).build();
     GroupKey pendingGroupKey = noAccountGroupKey.toBuilder().setDownloaded(false).build();
 
-    keyToGroupList.add(Pair.create(downloadedGroupKey, downloadedFileGroup));
-    keyToGroupList.add(Pair.create(downloadedAccount1GroupKey, downloadedFileGroup));
-    keyToGroupList.add(Pair.create(downloadedAccount2GroupKey, downloadedFileGroup));
-    keyToGroupList.add(Pair.create(pendingGroupKey, pendingFileGroup));
-    keyToGroupList.add(Pair.create(pendingAccount1GroupKey, pendingFileGroup));
-    keyToGroupList.add(Pair.create(pendingAccount2GroupKey, pendingFileGroup));
+    keyToGroupList.add(GroupKeyAndGroup.create(downloadedGroupKey, downloadedFileGroup));
+    keyToGroupList.add(GroupKeyAndGroup.create(downloadedAccount1GroupKey, downloadedFileGroup));
+    keyToGroupList.add(GroupKeyAndGroup.create(downloadedAccount2GroupKey, downloadedFileGroup));
+    keyToGroupList.add(GroupKeyAndGroup.create(pendingGroupKey, pendingFileGroup));
+    keyToGroupList.add(GroupKeyAndGroup.create(pendingAccount1GroupKey, pendingFileGroup));
+    keyToGroupList.add(GroupKeyAndGroup.create(pendingAccount2GroupKey, pendingFileGroup));
 
     when(mockMobileDataDownloadManager.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(keyToGroupList));
@@ -936,15 +861,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
-            /* foregroundDownloadServiceClassOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
+            /* foregroundDownloadServiceClassOptional= */ Optional.absent(),
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // Setup request that matches all fresh groups, but also include account to make sure only
     // account associated file groups are removed
@@ -964,19 +890,10 @@ public class MobileDataDownloadTest {
 
   @Test
   public void getFileGroup_nullFileUri() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
         .thenReturn(
             Futures.immediateFailedFuture(
                 DownloadException.builder()
@@ -989,7 +906,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -997,7 +914,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     assertNull(
         mobileDataDownload
@@ -1015,7 +933,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1023,40 +941,32 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     assertNull(
         mobileDataDownload
             .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build())
             .get());
-
-    verifyNoInteractions(mockEventLogger);
   }
 
   @Test
   public void getFileGroup_withAccount() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(true)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1064,7 +974,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     Account account = AccountUtil.create("account-name", "account-type");
     ClientFileGroup clientFileGroup =
@@ -1097,31 +1008,22 @@ public class MobileDataDownloadTest {
   @Test
   public void getFileGroup_withVariantId() throws Exception {
     DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                5 /* versionNumber */,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .setVariantId("en")
-            .build();
+        FILE_GROUP_INTERNAL_1.toBuilder().setVariantId("en").build();
 
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(true)))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1129,7 +1031,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -1164,16 +1067,7 @@ public class MobileDataDownloadTest {
             .setValue(StringValue.of("TEST_PROPERTY").toByteString())
             .build();
     DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                5 /* versionNumber */,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
+        FILE_GROUP_INTERNAL_1.toBuilder()
             .setBuildId(1L)
             .setVariantId("testvariant")
             .setCustomProperty(customProperty)
@@ -1181,15 +1075,17 @@ public class MobileDataDownloadTest {
 
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1197,7 +1093,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -1214,31 +1111,21 @@ public class MobileDataDownloadTest {
   @Test
   public void getFileGroup_includesLocale() throws Exception {
     DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                5 /* versionNumber */,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .addLocale("en-US")
-            .addLocale("en-CA")
-            .build();
+        FILE_GROUP_INTERNAL_1.toBuilder().addLocale("en-US").addLocale("en-CA").build();
 
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1246,7 +1133,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -1265,30 +1153,21 @@ public class MobileDataDownloadTest {
             .setValue(StringValue.of("TEST_METADATA").toByteString())
             .build();
     DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                5 /* versionNumber */,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .setCustomMetadata(customMetadata)
-            .build();
+        FILE_GROUP_INTERNAL_1.toBuilder().setCustomMetadata(customMetadata).build();
 
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1296,7 +1175,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -1333,17 +1213,22 @@ public class MobileDataDownloadTest {
 
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(1), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(
+                    dataFileGroup.getFile(0),
+                    onDeviceUri1,
+                    dataFileGroup.getFile(1),
+                    onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1351,7 +1236,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -1376,19 +1262,456 @@ public class MobileDataDownloadTest {
   }
 
   @Test
-  public void getFileGroupsByFilter_singleGroup() throws Exception {
-    List<Pair<GroupKey, DataFileGroupInternal>> keyDataFileGroupList = new ArrayList<>();
+  public void getFileGroup_whenVerifyIsolatedStructureIsFalse_skipsStructureVerification()
+      throws Exception {
+    MetadataProto.DataFile isolatedStructureFile =
+        MetadataProto.DataFile.newBuilder()
+            .setFileId(FILE_ID_1)
+            .setChecksumType(MetadataProto.DataFile.ChecksumType.NONE)
+            .setUrlToDownload(FILE_URL_1)
+            .setRelativeFilePath("mycustom/file.txt")
+            .build();
+    DataFileGroupInternal isolatedStructureGroup =
+        DataFileGroupInternal.newBuilder()
+            .setGroupName(FILE_GROUP_NAME_1)
+            .setOwnerPackage(context.getPackageName())
+            .setPreserveFilenamesAndIsolateFiles(true)
+            .addFile(isolatedStructureFile)
+            .build();
 
-    DataFileGroupInternal downloadedFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
+    when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
+        .thenReturn(Futures.immediateFuture(isolatedStructureGroup));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            isolatedStructureGroup, /* verifyIsolatedStructure= */ false))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(isolatedStructureGroup.getFile(0), onDeviceUri1)));
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            ImmutableList.of() /* fileGroupPopulatorList */,
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            Optional.absent() /* downloadMonitorOptional */,
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    ClientFileGroup clientFileGroup =
+        mobileDataDownload
+            .getFileGroup(
+                GetFileGroupRequest.newBuilder()
+                    .setGroupName(FILE_GROUP_NAME_1)
+                    .setVerifyIsolatedStructure(false)
+                    .build())
+            .get();
+
+    assertThat(clientFileGroup.getGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(clientFileGroup.getFile(0).getFileUri()).isEqualTo(onDeviceUri1.toString());
+
+    // Verify getting the file uri bypassed the verify check.
+    verify(mockMobileDataDownloadManager, never()).getDataFileUris(any(), eq(true));
+  }
+
+  @Test
+  public void getFileGroup_whenVerifyIsolatedStructureIsTrue_returnsNullOnInvalidStructure()
+      throws Exception {
+    MetadataProto.DataFile isolatedStructureFile =
+        MetadataProto.DataFile.newBuilder()
+            .setFileId(FILE_ID_1)
+            .setChecksumType(MetadataProto.DataFile.ChecksumType.NONE)
+            .setUrlToDownload(FILE_URL_1)
+            .setRelativeFilePath("mycustom/file.txt")
+            .build();
+    DataFileGroupInternal isolatedStructureGroup =
+        DataFileGroupInternal.newBuilder()
+            .setGroupName(FILE_GROUP_NAME_1)
+            .setOwnerPackage(context.getPackageName())
+            .setPreserveFilenamesAndIsolateFiles(true)
+            .addFile(isolatedStructureFile)
+            .build();
+
+    when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
+        .thenReturn(Futures.immediateFuture(isolatedStructureGroup));
+
+    // Mock that verification failed
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            isolatedStructureGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            ImmutableList.of() /* fileGroupPopulatorList */,
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            Optional.absent() /* downloadMonitorOptional */,
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    // Assert that a failure to verify the isolated structure returns a null group
+    assertThat(
+            mobileDataDownload
+                .getFileGroup(
+                    GetFileGroupRequest.newBuilder()
+                        .setGroupName(FILE_GROUP_NAME_1)
+                        .setVerifyIsolatedStructure(true)
+                        .build())
+                .get())
+        .isNull();
+
+    // Verify getting the file uri did not bypass the verify check.
+    verify(mockMobileDataDownloadManager, never()).getDataFileUris(any(), eq(false));
+  }
+
+  @Test
+  public void getFileGroup_fileGroupFound_logsQueryStatsForFileGroup() throws Exception {
+    DataFileGroupInternal dataFileGroup =
+        FILE_GROUP_INTERNAL_1.toBuilder().setBuildId(10).setVariantId("test-variant").build();
+    when(mockMobileDataDownloadManager.getFileGroup(
+            any(GroupKey.class), /* downloaded= */ eq(true)))
+        .thenReturn(Futures.immediateFuture(dataFileGroup));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            fakeEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            /* customValidatorOptional= */ Optional.absent(),
+            timeSource);
+
+    ClientFileGroup unused =
+        mobileDataDownload
+            .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build())
+            .get();
+
+    List<DataDownloadFileGroupStats> fileGroupDetailsList =
+        fakeEventLogger.getLoggedMddQueryStats();
+
+    assertThat(fileGroupDetailsList).hasSize(1);
+    DataDownloadFileGroupStats fileGroupStats = fileGroupDetailsList.get(0);
+    assertThat(fileGroupStats.getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.getFileGroupVersionNumber()).isEqualTo(5);
+    assertThat(fileGroupStats.getBuildId()).isEqualTo(10);
+    assertThat(fileGroupStats.getVariantId()).isEqualTo("test-variant");
+    assertThat(fileGroupStats.getFileCount()).isEqualTo(1);
+  }
+
+  @Test
+  public void getFileGroup_fileGroupFound_doesNotOverLog() throws Exception {
+    DataFileGroupInternal dataFileGroup = FILE_GROUP_INTERNAL_1;
+    when(mockMobileDataDownloadManager.getFileGroup(
+            any(GroupKey.class), /* downloaded= */ eq(true)))
+        .thenReturn(Futures.immediateFuture(dataFileGroup));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            /* customValidatorOptional= */ Optional.absent(),
+            timeSource);
+
+    ClientFileGroup unused =
+        mobileDataDownload
+            .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build())
+            .get();
+
+    verify(mockEventLogger).logMddQueryStats(any());
+    verify(mockEventLogger).logMddLibApiResultLog(any());
+    verifyNoMoreInteractions(mockEventLogger);
+  }
+
+  @Test
+  public void getFileGroup_fileGroupNotFound_doesNotOverLog() throws Exception {
+    when(mockMobileDataDownloadManager.getFileGroup(
+            any(GroupKey.class), /* downloaded= */ eq(true)))
+        .thenReturn(Futures.immediateFuture(null));
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            /* customValidatorOptional= */ Optional.absent(),
+            timeSource);
+
+    ClientFileGroup unused =
+        mobileDataDownload
+            .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build())
+            .get();
+
+    verify(mockEventLogger).logMddLibApiResultLog(any());
+    verifyNoMoreInteractions(mockEventLogger);
+  }
+
+  @Test
+  public void getFileGroup_throwsException_doesNotOverLog() throws Exception {
+    when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
+        .thenReturn(Futures.immediateFailedFuture(new Exception()));
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            /* customValidatorOptional= */ Optional.absent(),
+            timeSource);
+
+    assertThrows(
+        ExecutionException.class,
+        () ->
+            mobileDataDownload
+                .getFileGroup(
+                    GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build())
+                .get());
+
+    verify(mockEventLogger).logMddLibApiResultLog(any());
+    verifyNoMoreInteractions(mockEventLogger);
+  }
+
+  /**
+   * Helper function to test that expected errors are being logged.
+   *
+   * <p>causeThrowable is used to check for cause only if expectedThrowable is instance of
+   * ExecutionException.
+   */
+  private <T extends Throwable> void getFileGroupErrorLoggingTestHelper(
+      ListenableFuture<?> getFileGroupResultFuture,
+      Class<T> expectedThrowable,
+      Class<?> causeThrowable,
+      int code)
+      throws Exception {
+    long latencyNs = 1000;
+    when(mockMobileDataDownloadManager.getFileGroup(
+            any(GroupKey.class), /* downloaded= */ eq(true)))
+        .thenAnswer(
+            invocation -> {
+              // Advancing time source to test latency.
+              timeSource.advance(latencyNs, TimeUnit.NANOSECONDS);
+              return getFileGroupResultFuture;
+            });
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            fakeEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            /* customValidatorOptional= */ Optional.absent(),
+            timeSource);
+
+    Throwable thrown =
+        assertThrows(
+            expectedThrowable,
+            () ->
+                mobileDataDownload
+                    .getFileGroup(
+                        GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build())
+                    .get());
+
+    if (thrown instanceof ExecutionException) {
+      assertThat(thrown).hasCauseThat().isInstanceOf(causeThrowable);
+    }
+  }
+
+  @Test
+  public void getFileGroup_throwsCancelledException_logsCancelled() throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateCancelledFuture(), CancellationException.class, null, 0);
+  }
+
+  @Test
+  public void getFileGroup_throwsUnknownException_logsFailureWithoutCause() throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateFailedFuture(new Exception()),
+        ExecutionException.class,
+        Exception.class,
+        0);
+  }
+
+  @Test
+  public void getFileGroup_throwsInterruptedException_logsInterrupted() throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateFailedFuture(new InterruptedException()),
+        ExecutionException.class,
+        InterruptedException.class,
+        0);
+  }
+
+  @Test
+  public void getFileGroup_throwsIOException_logsIOError() throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateFailedFuture(new IOException()),
+        ExecutionException.class,
+        IOException.class,
+        0);
+  }
+
+  @Test
+  public void getFileGroup_throwsIllegalStateException_logsIllegalState() throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateFailedFuture(new IllegalStateException()),
+        ExecutionException.class,
+        IllegalStateException.class,
+        0);
+  }
+
+  @Test
+  public void getFileGroup_throwsIllegalArgumentException_logsIllegalArgument() throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateFailedFuture(new IllegalArgumentException()),
+        ExecutionException.class,
+        IllegalArgumentException.class,
+        0);
+  }
+
+  @Test
+  public void getFileGroup_throwsUnsupportedOperationException_logsUnsupportedOperation()
+      throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateFailedFuture(new UnsupportedOperationException()),
+        ExecutionException.class,
+        UnsupportedOperationException.class,
+        0);
+  }
+
+  @Test
+  public void getFileGroup_throwsDownloadException_logsDownloadError() throws Exception {
+    getFileGroupErrorLoggingTestHelper(
+        Futures.immediateFailedFuture(
+            DownloadException.builder()
+                .setDownloadResultCode(DownloadResultCode.UNSPECIFIED)
+                .build()),
+        ExecutionException.class,
+        DownloadException.class,
+        0);
+  }
+
+  @Test
+  public void readDataFileGroup_returnsFileGroup() throws Exception {
+    DataFileGroupInternal dataFileGroupInternal =
+        DataFileGroupInternal.newBuilder()
+            .setGroupName(FILE_GROUP_NAME_1)
+            .setOwnerPackage(context.getPackageName())
+            .addFile(
+                MetadataProto.DataFile.newBuilder()
+                    .setFileId(FILE_ID_1)
+                    .setUrlToDownload(FILE_URL_1)
+                    .build())
+            .addFile(
+                MetadataProto.DataFile.newBuilder()
+                    .setFileId(FILE_ID_2)
+                    .setUrlToDownload(FILE_URL_2)
+                    .build())
+            .build();
+
+    when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
+        .thenReturn(Futures.immediateFuture(dataFileGroupInternal));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroupInternal, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(
+                    dataFileGroupInternal.getFile(0),
+                    onDeviceUri1,
+                    dataFileGroupInternal.getFile(1),
+                    onDeviceUri1)));
+
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            ImmutableList.of() /* fileGroupPopulatorList */,
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            Optional.absent() /* downloadMonitorOptional */,
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    DataFileGroup dataFileGroup =
+        mobileDataDownload
+            .readDataFileGroup(
+                ReadDataFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME_1).build())
+            .get();
+
+    assertThat(dataFileGroup.getGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(dataFileGroup.getFileList())
+        .containsExactly(
+            DataFile.newBuilder().setFileId(FILE_ID_1).setUrlToDownload(FILE_URL_1).build(),
+            DataFile.newBuilder().setFileId(FILE_ID_2).setUrlToDownload(FILE_URL_2).build());
+  }
+
+  @Test
+  public void getFileGroupsByFilter_singleGroup() throws Exception {
+    List<GroupKeyAndGroup> keyDataFileGroupList = new ArrayList<>();
+
+    DataFileGroupInternal downloadedFileGroup = FILE_GROUP_INTERNAL_1;
 
     GroupKey groupKey =
         GroupKey.newBuilder()
@@ -1397,11 +1720,13 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(eq(groupKey), eq(true)))
         .thenReturn(Futures.immediateFuture(downloadedFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(
-            downloadedFileGroup.getFile(0), downloadedFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            downloadedFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(downloadedFileGroup.getFile(0), onDeviceUri1)));
     keyDataFileGroupList.add(
-        Pair.create(groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
 
     DataFileGroupInternal pendingFileGroup =
         createDataFileGroupInternal(
@@ -1419,8 +1744,12 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey, false))
         .thenReturn(Futures.immediateFuture(pendingFileGroup));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey.toBuilder().setDownloaded(false).build(), pendingFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey.toBuilder().setDownloaded(false).build(), pendingFileGroup));
 
     DataFileGroupInternal pendingFileGroup2 =
         createDataFileGroupInternal(
@@ -1439,8 +1768,12 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey2, false))
         .thenReturn(Futures.immediateFuture(pendingFileGroup2));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup2, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
+        GroupKeyAndGroup.create(
+            groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
 
     when(mockMobileDataDownloadManager.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(keyDataFileGroupList));
@@ -1450,7 +1783,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1458,7 +1791,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // We should get back 2 groups for FILE_GROUP_NAME_1.
     GetFileGroupsByFilterRequest getFileGroupsByFilterRequest =
@@ -1508,35 +1842,49 @@ public class MobileDataDownloadTest {
     assertThat(pendingClientFileGroup2.getStatus()).isEqualTo(Status.PENDING);
     assertThat(pendingClientFileGroup2.getFileCount()).isEqualTo(2);
     assertThat(pendingClientFileGroup2.hasAccount()).isFalse();
+
+    ArgumentCaptor<DataDownloadFileGroupStats> fileGroupDetailsCaptor =
+        ArgumentCaptor.forClass(DataDownloadFileGroupStats.class);
+    verify(mockEventLogger, times(3)).logMddQueryStats(fileGroupDetailsCaptor.capture());
+
+    List<DataDownloadFileGroupStats> fileGroupStats = fileGroupDetailsCaptor.getAllValues();
+    assertThat(fileGroupStats).hasSize(3);
+    assertThat(fileGroupStats.get(0).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(0).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(0).getFileGroupVersionNumber()).isEqualTo(5);
+    assertThat(fileGroupStats.get(0).getFileCount()).isEqualTo(1);
+    assertThat(fileGroupStats.get(1).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(1).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(1).getFileGroupVersionNumber()).isEqualTo(7);
+    assertThat(fileGroupStats.get(1).getFileCount()).isEqualTo(1);
+    assertThat(fileGroupStats.get(2).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_2);
+    assertThat(fileGroupStats.get(2).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(2).getFileGroupVersionNumber()).isEqualTo(4);
+    assertThat(fileGroupStats.get(2).getFileCount()).isEqualTo(2);
+
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
   public void getFileGroupsByFilter_includeAllGroups() throws Exception {
-    List<Pair<GroupKey, DataFileGroupInternal>> keyDataFileGroupList = new ArrayList<>();
+    List<GroupKeyAndGroup> keyDataFileGroupList = new ArrayList<>();
 
     Account account = AccountUtil.create("account-name", "account-type");
 
-    DataFileGroupInternal downloadedFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
+    DataFileGroupInternal downloadedFileGroup = FILE_GROUP_INTERNAL_1;
     GroupKey groupKey =
         GroupKey.newBuilder()
             .setGroupName(FILE_GROUP_NAME_1)
             .setOwnerPackage(context.getPackageName())
             .setAccount(AccountUtil.serialize(account))
             .build();
-    when(mockMobileDataDownloadManager.getDataFileUri(
-            downloadedFileGroup.getFile(0), downloadedFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            downloadedFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(downloadedFileGroup.getFile(0), onDeviceUri1)));
     keyDataFileGroupList.add(
-        Pair.create(groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
 
     DataFileGroupInternal pendingFileGroup =
         createDataFileGroupInternal(
@@ -1548,8 +1896,12 @@ public class MobileDataDownloadTest {
             new String[] {FILE_CHECKSUM_2},
             new String[] {FILE_URL_2},
             DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey.toBuilder().setDownloaded(false).build(), pendingFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey.toBuilder().setDownloaded(false).build(), pendingFileGroup));
 
     DataFileGroupInternal pendingFileGroup2 =
         createDataFileGroupInternal(
@@ -1568,8 +1920,12 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey2, false))
         .thenReturn(Futures.immediateFuture(pendingFileGroup2));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup2, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
+        GroupKeyAndGroup.create(
+            groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
 
     when(mockMobileDataDownloadManager.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(keyDataFileGroupList));
@@ -1579,7 +1935,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1587,7 +1943,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // We should get back all 3 groups for this key.
     GetFileGroupsByFilterRequest getFileGroupsByFilterRequest =
@@ -1628,6 +1985,27 @@ public class MobileDataDownloadTest {
     assertThat(pendingClientFileGroup2.getStatus()).isEqualTo(Status.PENDING);
     assertThat(pendingClientFileGroup2.getFileCount()).isEqualTo(2);
     assertThat(pendingClientFileGroup2.hasAccount()).isFalse();
+
+    ArgumentCaptor<DataDownloadFileGroupStats> fileGroupDetailsCaptor =
+        ArgumentCaptor.forClass(DataDownloadFileGroupStats.class);
+    verify(mockEventLogger, times(3)).logMddQueryStats(fileGroupDetailsCaptor.capture());
+
+    List<DataDownloadFileGroupStats> fileGroupStats = fileGroupDetailsCaptor.getAllValues();
+    assertThat(fileGroupStats).hasSize(3);
+    assertThat(fileGroupStats.get(0).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(0).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(0).getFileGroupVersionNumber()).isEqualTo(5);
+    assertThat(fileGroupStats.get(0).getFileCount()).isEqualTo(1);
+    assertThat(fileGroupStats.get(1).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(1).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(1).getFileGroupVersionNumber()).isEqualTo(7);
+    assertThat(fileGroupStats.get(1).getFileCount()).isEqualTo(1);
+    assertThat(fileGroupStats.get(2).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_2);
+    assertThat(fileGroupStats.get(2).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(2).getFileGroupVersionNumber()).isEqualTo(4);
+    assertThat(fileGroupStats.get(2).getFileCount()).isEqualTo(2);
+
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -1637,7 +2015,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1645,7 +2023,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
     when(mockMobileDataDownloadManager.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(ImmutableList.of()));
 
@@ -1667,21 +2046,12 @@ public class MobileDataDownloadTest {
 
   @Test
   public void getFileGroupsByFilter_withAccount() throws Exception {
-    List<Pair<GroupKey, DataFileGroupInternal>> keyDataFileGroupList = new ArrayList<>();
+    List<GroupKeyAndGroup> keyDataFileGroupList = new ArrayList<>();
 
     Account account1 = AccountUtil.create("account-name-1", "account-type");
     Account account2 = AccountUtil.create("account-name-2", "account-type");
 
-    DataFileGroupInternal downloadedFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
+    DataFileGroupInternal downloadedFileGroup = FILE_GROUP_INTERNAL_1;
     GroupKey groupKey =
         GroupKey.newBuilder()
             .setGroupName(FILE_GROUP_NAME_1)
@@ -1690,11 +2060,13 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey, true))
         .thenReturn(Futures.immediateFuture(downloadedFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(
-            downloadedFileGroup.getFile(0), downloadedFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            downloadedFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(downloadedFileGroup.getFile(0), onDeviceUri1)));
     keyDataFileGroupList.add(
-        Pair.create(groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
 
     DataFileGroupInternal pendingFileGroup =
         createDataFileGroupInternal(
@@ -1708,8 +2080,12 @@ public class MobileDataDownloadTest {
             DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     when(mockMobileDataDownloadManager.getFileGroup(groupKey, false))
         .thenReturn(Futures.immediateFuture(pendingFileGroup));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey.toBuilder().setDownloaded(false).build(), pendingFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey.toBuilder().setDownloaded(false).build(), pendingFileGroup));
 
     DataFileGroupInternal pendingFileGroup2 =
         createDataFileGroupInternal(
@@ -1729,8 +2105,12 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey2, false))
         .thenReturn(Futures.immediateFuture(pendingFileGroup2));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup2, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
+        GroupKeyAndGroup.create(
+            groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
 
     when(mockMobileDataDownloadManager.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(keyDataFileGroupList));
@@ -1740,7 +2120,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -1748,7 +2128,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // We should get back 2 groups for FILE_GROUP_NAME_1 with account1.
     GetFileGroupsByFilterRequest getFileGroupsByFilterRequest =
@@ -1799,26 +2180,38 @@ public class MobileDataDownloadTest {
     assertThat(pendingClientFileGroup2.getAccount()).isEqualTo(AccountUtil.serialize(account2));
     assertThat(pendingClientFileGroup2.getStatus()).isEqualTo(Status.PENDING);
     assertThat(pendingClientFileGroup2.getFileCount()).isEqualTo(2);
+
+    ArgumentCaptor<DataDownloadFileGroupStats> fileGroupDetailsCaptor =
+        ArgumentCaptor.forClass(DataDownloadFileGroupStats.class);
+    verify(mockEventLogger, times(3)).logMddQueryStats(fileGroupDetailsCaptor.capture());
+
+    List<DataDownloadFileGroupStats> fileGroupStats = fileGroupDetailsCaptor.getAllValues();
+    assertThat(fileGroupStats).hasSize(3);
+    assertThat(fileGroupStats.get(0).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(0).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(0).getFileGroupVersionNumber()).isEqualTo(5);
+    assertThat(fileGroupStats.get(0).getFileCount()).isEqualTo(1);
+    assertThat(fileGroupStats.get(1).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(1).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(1).getFileGroupVersionNumber()).isEqualTo(7);
+    assertThat(fileGroupStats.get(1).getFileCount()).isEqualTo(1);
+    assertThat(fileGroupStats.get(2).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(2).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(2).getFileGroupVersionNumber()).isEqualTo(4);
+    assertThat(fileGroupStats.get(2).getFileCount()).isEqualTo(2);
+
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
   public void getFileGroupsByFilter_groupWithNoAccountOnly() throws Exception {
-    List<Pair<GroupKey, DataFileGroupInternal>> keyDataFileGroupList = new ArrayList<>();
+    List<GroupKeyAndGroup> keyDataFileGroupList = new ArrayList<>();
 
     Account account1 = AccountUtil.create("account-name-1", "account-type");
     Account account2 = AccountUtil.create("account-name-2", "account-type");
 
     // downloadedFileGroup is associated with account1.
-    DataFileGroupInternal downloadedFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            /*versionNumber=*/ 5,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
+    DataFileGroupInternal downloadedFileGroup = FILE_GROUP_INTERNAL_1;
     GroupKey groupKey =
         GroupKey.newBuilder()
             .setGroupName(FILE_GROUP_NAME_1)
@@ -1827,18 +2220,20 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey, true))
         .thenReturn(Futures.immediateFuture(downloadedFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(
-            downloadedFileGroup.getFile(0), downloadedFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            downloadedFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(downloadedFileGroup.getFile(0), onDeviceUri1)));
     keyDataFileGroupList.add(
-        Pair.create(groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey.toBuilder().setDownloaded(true).build(), downloadedFileGroup));
 
     // pendingFileGroup is associated with account2.
     DataFileGroupInternal pendingFileGroup =
         createDataFileGroupInternal(
             FILE_GROUP_NAME_1,
             context.getPackageName(),
-            /*versionNumber=*/ 7,
+            /* versionNumber= */ 7,
             new String[] {FILE_ID_1},
             new int[] {FILE_SIZE_2},
             new String[] {FILE_CHECKSUM_2},
@@ -1852,15 +2247,19 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey2, false))
         .thenReturn(Futures.immediateFuture(pendingFileGroup));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup));
+        GroupKeyAndGroup.create(
+            groupKey2.toBuilder().setDownloaded(false).build(), pendingFileGroup));
 
     // pendingFileGroup2 is an account independent group.
     DataFileGroupInternal pendingFileGroup2 =
         createDataFileGroupInternal(
             FILE_GROUP_NAME_1,
             context.getPackageName(),
-            /*versionNumber=*/ 4,
+            /* versionNumber= */ 4,
             new String[] {FILE_ID_1, FILE_ID_2},
             new int[] {FILE_SIZE_1, FILE_SIZE_2},
             new String[] {FILE_CHECKSUM_1, FILE_CHECKSUM_2},
@@ -1873,8 +2272,12 @@ public class MobileDataDownloadTest {
             .build();
     when(mockMobileDataDownloadManager.getFileGroup(groupKey3, false))
         .thenReturn(Futures.immediateFuture(pendingFileGroup2));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            pendingFileGroup2, /* verifyIsolatedStructure= */ true))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of()));
     keyDataFileGroupList.add(
-        Pair.create(groupKey3.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
+        GroupKeyAndGroup.create(
+            groupKey3.toBuilder().setDownloaded(false).build(), pendingFileGroup2));
 
     when(mockMobileDataDownloadManager.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(keyDataFileGroupList));
@@ -1884,15 +2287,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /*fileGroupPopulatorList=*/ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /*downloadMonitorOptional=*/ Optional.absent(),
-            /* foregroundDownloadServiceClassOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
+            /* foregroundDownloadServiceClassOptional= */ Optional.absent(),
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // We should get back only 1 group for FILE_GROUP_NAME_1 with groupWithNoAccountOnly being set
     // to true.
@@ -1912,6 +2316,19 @@ public class MobileDataDownloadTest {
     assertThat(pendingClientFileGroup.getStatus()).isEqualTo(Status.PENDING);
     assertThat(pendingClientFileGroup.getFileCount()).isEqualTo(2);
     assertThat(pendingClientFileGroup.hasAccount()).isFalse();
+
+    ArgumentCaptor<DataDownloadFileGroupStats> fileGroupDetailsCaptor =
+        ArgumentCaptor.forClass(DataDownloadFileGroupStats.class);
+    verify(mockEventLogger, times(1)).logMddQueryStats(fileGroupDetailsCaptor.capture());
+
+    List<DataDownloadFileGroupStats> fileGroupStats = fileGroupDetailsCaptor.getAllValues();
+    assertThat(fileGroupStats).hasSize(1);
+    assertThat(fileGroupStats.get(0).getFileGroupName()).isEqualTo(FILE_GROUP_NAME_1);
+    assertThat(fileGroupStats.get(0).getOwnerPackage()).isEqualTo(context.getPackageName());
+    assertThat(fileGroupStats.get(0).getFileGroupVersionNumber()).isEqualTo(4);
+    assertThat(fileGroupStats.get(0).getFileCount()).isEqualTo(2);
+
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -1939,15 +2356,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()),
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // Since we use mocks, just call the method directly, no need to call addFileGroup first
     mobileDataDownload
@@ -2006,15 +2424,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()),
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // Since we use mocks, just call the method directly, no need to call addFileGroup first
     mobileDataDownload
@@ -2074,15 +2493,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()),
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     // Since we use mocks, just call the method directly, no need to call addFileGroup first
     ExecutionException ex =
@@ -2122,28 +2542,25 @@ public class MobileDataDownloadTest {
 
   @Test
   public void downloadFileGroup() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(false)))
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(true)))
+        .thenReturn(Futures.immediateFuture(null));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -2151,9 +2568,10 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
-    CountDownLatch onCompleteLatch = new CountDownLatch(1);
+    AtomicBoolean onCompleteInvoked = new AtomicBoolean();
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -2168,25 +2586,19 @@ public class MobileDataDownloadTest {
 
                               @Override
                               public void onComplete(ClientFileGroup clientFileGroup) {
+                                onCompleteInvoked.set(true);
                                 assertThat(clientFileGroup.getGroupName())
                                     .isEqualTo(FILE_GROUP_NAME_1);
                                 assertThat(clientFileGroup.getOwnerPackage())
                                     .isEqualTo(context.getPackageName());
                                 assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
                                 assertThat(clientFileGroup.getFileCount()).isEqualTo(1);
-
-                                // This is to verify that onComplete is called.
-                                onCompleteLatch.countDown();
                               }
                             }))
                     .build())
             .get();
 
-    // Verify that onComplete is called.
-    if (!onCompleteLatch.await(LATCH_WAIT_TIME_MS, TimeUnit.MILLISECONDS)) {
-      throw new RuntimeException("onComplete is not called");
-    }
-
+    assertThat(onCompleteInvoked.get()).isTrue();
     assertThat(clientFileGroup.getGroupName()).isEqualTo(FILE_GROUP_NAME_1);
     assertThat(clientFileGroup.getOwnerPackage()).isEqualTo(context.getPackageName());
     assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
@@ -2209,6 +2621,10 @@ public class MobileDataDownloadTest {
   @Test
   public void downloadFileGroup_failed() throws Exception {
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(false)))
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(true)))
+        .thenReturn(Futures.immediateFuture(null));
     when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
         .thenReturn(
             Futures.immediateFailedFuture(
@@ -2222,7 +2638,7 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -2230,7 +2646,11 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    AtomicBoolean listenerOnFailureInvoked = new AtomicBoolean();
+    AtomicBoolean callbackOnFailureInvoked = new AtomicBoolean();
 
     ListenableFuture<ClientFileGroup> downloadFuture =
         mobileDataDownload.downloadFileGroup(
@@ -2244,10 +2664,13 @@ public class MobileDataDownloadTest {
 
                           @Override
                           public void onComplete(ClientFileGroup clientFileGroup) {}
+
+                          @Override
+                          public void onFailure(Throwable t) {
+                            listenerOnFailureInvoked.set(true);
+                          }
                         }))
                 .build());
-
-    CountDownLatch onFailureLatch = new CountDownLatch(1);
 
     Futures.addCallback(
         downloadFuture,
@@ -2257,8 +2680,7 @@ public class MobileDataDownloadTest {
 
           @Override
           public void onFailure(Throwable t) {
-            // This is to ensure that onFailure is called.
-            onFailureLatch.countDown();
+            callbackOnFailureInvoked.set(true);
           }
         },
         MoreExecutors.directExecutor());
@@ -2267,10 +2689,8 @@ public class MobileDataDownloadTest {
     DownloadException e = LabsFutures.getFailureCauseAs(downloadFuture, DownloadException.class);
     assertThat(e).hasMessageThat().contains("Fail");
 
-    if (!onFailureLatch.await(LATCH_WAIT_TIME_MS, TimeUnit.MILLISECONDS)) {
-      throw new RuntimeException("latch timeout: onFailure is not called");
-    }
-
+    assertThat(listenerOnFailureInvoked.get()).isTrue();
+    assertThat(callbackOnFailureInvoked.get()).isTrue();
     verify(mockMobileDataDownloadManager).downloadFileGroup(any(GroupKey.class), any(), any());
     verify(mockDownloadMonitor)
         .addDownloadListener(eq(FILE_GROUP_NAME_1), any(DownloadListener.class));
@@ -2282,28 +2702,25 @@ public class MobileDataDownloadTest {
 
   @Test
   public void downloadFileGroup_withAccount() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(false)))
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(true)))
+        .thenReturn(Futures.immediateFuture(null));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -2311,9 +2728,10 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
-    CountDownLatch onCompleteLatch = new CountDownLatch(1);
+    AtomicBoolean onCompleteInvoked = new AtomicBoolean();
 
     Account account = AccountUtil.create("account-name", "account-type");
     ClientFileGroup clientFileGroup =
@@ -2330,25 +2748,19 @@ public class MobileDataDownloadTest {
 
                               @Override
                               public void onComplete(ClientFileGroup clientFileGroup) {
+                                onCompleteInvoked.set(true);
                                 assertThat(clientFileGroup.getGroupName())
                                     .isEqualTo(FILE_GROUP_NAME_1);
                                 assertThat(clientFileGroup.getOwnerPackage())
                                     .isEqualTo(context.getPackageName());
                                 assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
                                 assertThat(clientFileGroup.getFileCount()).isEqualTo(1);
-
-                                // This is to verify that onComplete is called.
-                                onCompleteLatch.countDown();
                               }
                             }))
                     .build())
             .get();
 
-    // Verify that onComplete is called.
-    if (!onCompleteLatch.await(LATCH_WAIT_TIME_MS, TimeUnit.MILLISECONDS)) {
-      throw new RuntimeException("onComplete is not called");
-    }
-
+    assertThat(onCompleteInvoked.get()).isTrue();
     assertThat(clientFileGroup.getGroupName()).isEqualTo(FILE_GROUP_NAME_1);
     assertThat(clientFileGroup.getOwnerPackage()).isEqualTo(context.getPackageName());
     assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
@@ -2371,31 +2783,26 @@ public class MobileDataDownloadTest {
   @Test
   public void downloadFileGroup_withVariantId() throws Exception {
     DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                /* versionNumber = */ 5,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .setVariantId("en")
-            .build();
+        FILE_GROUP_INTERNAL_1.toBuilder().setVariantId("en").build();
 
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(false)))
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getFileGroup(any(), eq(true)))
+        .thenReturn(Futures.immediateFuture(null));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of() /* fileGroupPopulatorList */,
             Optional.of(mockTaskScheduler),
             fileStorage,
@@ -2403,7 +2810,8 @@ public class MobileDataDownloadTest {
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -2430,38 +2838,32 @@ public class MobileDataDownloadTest {
 
   @Test
   public void downloadFileGroupWithForegroundService() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            /* versionNumber = */ 5,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceUri1)));
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), anyBoolean()))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()),
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     CountDownLatch onCompleteLatch = new CountDownLatch(1);
 
@@ -2518,16 +2920,6 @@ public class MobileDataDownloadTest {
 
   @Test
   public void downloadFileGroupWithForegroundService_failed() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            /* versionNumber = */ 5,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
         .thenReturn(
@@ -2537,7 +2929,7 @@ public class MobileDataDownloadTest {
                     .setMessage("Fail to download file group")
                     .build()));
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(false)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(true)))
         .thenReturn(Futures.immediateFuture(null));
 
@@ -2546,15 +2938,21 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    expectErrorLogMessage(
+        "DownloadListener: onFailure:"
+            + " com.google.android.libraries.mobiledatadownload.DownloadException: Fail to download"
+            + " file group");
 
     ListenableFuture<ClientFileGroup> downloadFuture =
         mobileDataDownload.downloadFileGroupWithForegroundService(
@@ -2571,8 +2969,7 @@ public class MobileDataDownloadTest {
                         }))
                 .build());
 
-    CountDownLatch onFailureLatch = new CountDownLatch(1);
-
+    AtomicBoolean onFailureInvoked = new AtomicBoolean();
     Futures.addCallback(
         downloadFuture,
         new FutureCallback<ClientFileGroup>() {
@@ -2581,8 +2978,7 @@ public class MobileDataDownloadTest {
 
           @Override
           public void onFailure(Throwable t) {
-            // This is to ensure that onFailure is called.
-            onFailureLatch.countDown();
+            onFailureInvoked.set(true);
           }
         },
         MoreExecutors.directExecutor());
@@ -2591,16 +2987,11 @@ public class MobileDataDownloadTest {
     DownloadException e = LabsFutures.getFailureCauseAs(downloadFuture, DownloadException.class);
     assertThat(e).hasMessageThat().contains("Fail");
 
-    if (!onFailureLatch.await(LATCH_WAIT_TIME_MS, TimeUnit.MILLISECONDS)) {
-      throw new RuntimeException("latch timeout: onFailure is not called");
-    }
-
     verify(mockMobileDataDownloadManager).downloadFileGroup(any(GroupKey.class), any(), any());
     verify(mockDownloadMonitor)
         .addDownloadListener(eq(FILE_GROUP_NAME_1), any(DownloadListener.class));
 
-    // Sleep for 1 sec to wait for the listener.onFailure to finish.
-    Thread.sleep(/*millis=*/ 1000);
+    assertThat(onFailureInvoked.get()).isTrue();
     verify(mockDownloadMonitor).removeDownloadListener(eq(FILE_GROUP_NAME_1));
 
     assertThat(groupKeyCaptor.getValue().getGroupName()).isEqualTo(FILE_GROUP_NAME_1);
@@ -2609,23 +3000,16 @@ public class MobileDataDownloadTest {
 
   @Test
   public void downloadFileGroupWithForegroundService_withAccount() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            5 /* versionNumber */,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceUri1)));
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(false)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(true)))
         .thenReturn(Futures.immediateFuture(null));
 
@@ -2634,18 +3018,18 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
-    CountDownLatch onCompleteLatch = new CountDownLatch(1);
-
+    AtomicBoolean onCompleteInvoked = new AtomicBoolean();
     Account account = AccountUtil.create("account-name", "account-type");
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -2661,25 +3045,19 @@ public class MobileDataDownloadTest {
 
                               @Override
                               public void onComplete(ClientFileGroup clientFileGroup) {
+                                onCompleteInvoked.set(true);
                                 assertThat(clientFileGroup.getGroupName())
                                     .isEqualTo(FILE_GROUP_NAME_1);
                                 assertThat(clientFileGroup.getOwnerPackage())
                                     .isEqualTo(context.getPackageName());
                                 assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
                                 assertThat(clientFileGroup.getFileCount()).isEqualTo(1);
-
-                                // This is to verify that onComplete is called.
-                                onCompleteLatch.countDown();
                               }
                             }))
                     .build())
             .get();
 
-    // Verify that onComplete is called.
-    if (!onCompleteLatch.await(LATCH_WAIT_TIME_MS, TimeUnit.MILLISECONDS)) {
-      throw new RuntimeException("onComplete is not called");
-    }
-
+    assertThat(onCompleteInvoked.get()).isTrue();
     assertThat(clientFileGroup.getGroupName()).isEqualTo(FILE_GROUP_NAME_1);
     assertThat(clientFileGroup.getOwnerPackage()).isEqualTo(context.getPackageName());
     assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
@@ -2702,43 +3080,41 @@ public class MobileDataDownloadTest {
   @Test
   public void downloadFileGroupWithForegroundService_withVariantId() throws Exception {
     DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-                FILE_GROUP_NAME_1,
-                context.getPackageName(),
-                /* versionNumber = */ 5,
-                new String[] {FILE_ID_1},
-                new int[] {FILE_SIZE_1},
-                new String[] {FILE_CHECKSUM_1},
-                new String[] {FILE_URL_1},
-                DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI)
-            .toBuilder()
-            .setVariantId("en")
-            .build();
+        FILE_GROUP_INTERNAL_1.toBuilder().setVariantId("en").build();
 
+    ArgumentCaptor<GroupKey> pendingGroupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
     ArgumentCaptor<GroupKey> groupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
-    when(mockMobileDataDownloadManager.downloadFileGroup(groupKeyCaptor.capture(), any(), any()))
+    ArgumentCaptor<GroupKey> downloadGroupKeyCaptor = ArgumentCaptor.forClass(GroupKey.class);
+    when(mockMobileDataDownloadManager.downloadFileGroup(
+            downloadGroupKeyCaptor.capture(), any(), any()))
         .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
-    when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(false)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            dataFileGroup, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(ImmutableMap.of(dataFileGroup.getFile(0), onDeviceUri1)));
+    // The order here is important: first mock true and then false.
+    // eq(true) returns false, and so if you mock false first, pendingGroupKeyCapture will capture
+    // the value of groupKeyCaptor.capture(), which is null.
     when(mockMobileDataDownloadManager.getFileGroup(groupKeyCaptor.capture(), eq(true)))
         .thenReturn(Futures.immediateFuture(null));
+    when(mockMobileDataDownloadManager.getFileGroup(pendingGroupKeyCaptor.capture(), eq(false)))
+        .thenReturn(Futures.immediateFuture(dataFileGroup));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
@@ -2760,47 +3136,45 @@ public class MobileDataDownloadTest {
             .setOwnerPackage(context.getPackageName())
             .setVariantId("en")
             .build();
+    assertThat(groupKeyCaptor.getAllValues()).hasSize(1);
     assertThat(groupKeyCaptor.getValue()).isEqualTo(expectedGroupKey);
+    assertThat(pendingGroupKeyCaptor.getAllValues()).hasSize(1);
+    assertThat(pendingGroupKeyCaptor.getValue()).isEqualTo(expectedGroupKey);
+    assertThat(downloadGroupKeyCaptor.getAllValues()).hasSize(1);
+    assertThat(downloadGroupKeyCaptor.getValue()).isEqualTo(expectedGroupKey);
   }
 
   @Test
   public void downloadFileGroupWithForegroundService_whenAlreadyDownloaded() throws Exception {
-    DataFileGroupInternal dataFileGroup =
-        createDataFileGroupInternal(
-            FILE_GROUP_NAME_1,
-            context.getPackageName(),
-            /* versionNumber = */ 5,
-            new String[] {FILE_ID_1},
-            new int[] {FILE_SIZE_1},
-            new String[] {FILE_CHECKSUM_1},
-            new String[] {FILE_URL_1},
-            DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceUri1)));
 
     // Mock situation: no pending group but there is a downloaded group
     when(mockMobileDataDownloadManager.getFileGroup(any(), eq(false)))
         .thenReturn(Futures.immediateFuture(null));
     when(mockMobileDataDownloadManager.getFileGroup(any(), eq(true)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
 
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
-    CountDownLatch onCompleteLatch = new CountDownLatch(1);
-
+    AtomicBoolean onCompleteInvoked = new AtomicBoolean(false);
     ClientFileGroup clientFileGroup =
         mobileDataDownload
             .downloadFileGroupWithForegroundService(
@@ -2814,25 +3188,19 @@ public class MobileDataDownloadTest {
 
                               @Override
                               public void onComplete(ClientFileGroup clientFileGroup) {
+                                onCompleteInvoked.set(true);
                                 assertThat(clientFileGroup.getGroupName())
                                     .isEqualTo(FILE_GROUP_NAME_1);
                                 assertThat(clientFileGroup.getOwnerPackage())
                                     .isEqualTo(context.getPackageName());
                                 assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
                                 assertThat(clientFileGroup.getFileCount()).isEqualTo(1);
-
-                                // This is to verify that onComplete is called.
-                                onCompleteLatch.countDown();
                               }
                             }))
                     .build())
             .get();
 
-    // Verify that onComplete is called.
-    if (!onCompleteLatch.await(LATCH_WAIT_TIME_MS, TimeUnit.MILLISECONDS)) {
-      throw new RuntimeException("onComplete is not called");
-    }
-
+    assertThat(onCompleteInvoked.get()).isTrue();
     assertThat(clientFileGroup.getGroupName()).isEqualTo(FILE_GROUP_NAME_1);
     assertThat(clientFileGroup.getOwnerPackage()).isEqualTo(context.getPackageName());
     assertThat(clientFileGroup.getVersionNumber()).isEqualTo(5);
@@ -2862,18 +3230,18 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
             Optional.of(mockDownloadMonitor),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
-    CountDownLatch onFailureLatch = new CountDownLatch(1);
-
+    AtomicBoolean onFailureInvoked = new AtomicBoolean(false);
     ListenableFuture<ClientFileGroup> downloadFuture =
         mobileDataDownload.downloadFileGroupWithForegroundService(
             DownloadFileGroupRequest.newBuilder()
@@ -2891,23 +3259,17 @@ public class MobileDataDownloadTest {
 
                           @Override
                           public void onFailure(Throwable t) {
+                            onFailureInvoked.set(true);
                             assertThat(t).isInstanceOf(DownloadException.class);
                             assertThat(((DownloadException) t).getDownloadResultCode())
                                 .isEqualTo(DownloadResultCode.GROUP_NOT_FOUND_ERROR);
-
-                            // This is to verify onFailure is called.
-                            onFailureLatch.countDown();
                           }
                         }))
                 .build());
 
     assertThrows(ExecutionException.class, downloadFuture::get);
 
-    // Verify onFailure is called
-    if (!onFailureLatch.await(LATCH_WAIT_TIME_MS, TimeUnit.MILLISECONDS)) {
-      fail("onFailure should be called");
-    }
-
+    assertThat(onFailureInvoked.get()).isTrue();
     DownloadException e = LabsFutures.getFailureCauseAs(downloadFuture, DownloadException.class);
     assertThat(e.getDownloadResultCode()).isEqualTo(DownloadResultCode.GROUP_NOT_FOUND_ERROR);
 
@@ -2925,15 +3287,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /*fileGroupPopulatorList=*/ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /*downloadMonitorOptional=*/ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     when(mockMobileDataDownloadManager.maintenance()).thenReturn(Futures.immediateFuture(null));
 
@@ -2950,15 +3313,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /*fileGroupPopulatorList=*/ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /*downloadMonitorOptional=*/ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     when(mockMobileDataDownloadManager.maintenance())
         .thenReturn(Futures.immediateFailedFuture(new IOException("test-failure")));
@@ -2973,51 +3337,79 @@ public class MobileDataDownloadTest {
   }
 
   @Test
+  public void collectGarbage_interactionTest() throws Exception {
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.of(this.getClass()), // don't need to use the real foreground download service.
+            flags,
+            singleFileDownloader,
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    when(mockMobileDataDownloadManager.removeExpiredGroupsAndFiles())
+        .thenReturn(Futures.immediateFuture(null));
+
+    mobileDataDownload.collectGarbage().get();
+
+    verify(mockMobileDataDownloadManager).removeExpiredGroupsAndFiles();
+    verifyNoMoreInteractions(mockMobileDataDownloadManager);
+  }
+
+  @Test
   public void schedulePeriodicTasks() throws Exception {
     MobileDataDownload mobileDataDownload =
         new MobileDataDownloadImpl(
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     mobileDataDownload.schedulePeriodicTasks();
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.CHARGING_PERIODIC_TASK,
-            (new Flags() {}).chargingGcmTaskPeriod(),
+            flags.chargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_ANY,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.MAINTENANCE_PERIODIC_TASK,
-            (new Flags() {}).maintenanceGcmTaskPeriod(),
+            flags.maintenanceGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_ANY,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK,
-            (new Flags() {}).cellularChargingGcmTaskPeriod(),
+            flags.cellularChargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_CONNECTED,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.WIFI_CHARGING_PERIODIC_TASK,
-            (new Flags() {}).wifiChargingGcmTaskPeriod(),
+            flags.wifiChargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_UNMETERED,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verifyNoMoreInteractions(mockTaskScheduler);
   }
@@ -3029,16 +3421,20 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
-            /* taskSchedulerOptional = */ Optional.absent(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            /* taskSchedulerOptional= */ Optional.absent(),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
+    expectErrorLogMessage(
+        "MobileDataDownload: Called schedulePeriodicTasksInternal when taskScheduler is not"
+            + " provided.");
     mobileDataDownload.schedulePeriodicTasks();
 
     verifyNoInteractions(mockTaskScheduler);
@@ -3051,45 +3447,46 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     mobileDataDownload.schedulePeriodicBackgroundTasks().get();
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.CHARGING_PERIODIC_TASK,
-            (new Flags() {}).chargingGcmTaskPeriod(),
+            flags.chargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_ANY,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.MAINTENANCE_PERIODIC_TASK,
-            (new Flags() {}).maintenanceGcmTaskPeriod(),
+            flags.maintenanceGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_ANY,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK,
-            (new Flags() {}).cellularChargingGcmTaskPeriod(),
+            flags.cellularChargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_CONNECTED,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.WIFI_CHARGING_PERIODIC_TASK,
-            (new Flags() {}).wifiChargingGcmTaskPeriod(),
+            flags.wifiChargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_UNMETERED,
-            /* constraintOverrides = */ Optional.absent());
+            /* constraintOverrides= */ Optional.absent());
 
     verifyNoMoreInteractions(mockTaskScheduler);
   }
@@ -3101,16 +3498,20 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
-            /* taskSchedulerOptional = */ Optional.absent(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            /* taskSchedulerOptional= */ Optional.absent(),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
+    expectErrorLogMessage(
+        "MobileDataDownload: Called schedulePeriodicTasksInternal when taskScheduler is not"
+            + " provided.");
     mobileDataDownload.schedulePeriodicBackgroundTasks().get();
 
     verifyNoInteractions(mockTaskScheduler);
@@ -3123,15 +3524,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ConstraintOverrides wifiOverrides =
         ConstraintOverrides.newBuilder()
@@ -3153,28 +3555,28 @@ public class MobileDataDownloadTest {
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.CHARGING_PERIODIC_TASK,
-            (new Flags() {}).chargingGcmTaskPeriod(),
+            flags.chargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_ANY,
             Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.MAINTENANCE_PERIODIC_TASK,
-            (new Flags() {}).maintenanceGcmTaskPeriod(),
+            flags.maintenanceGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_ANY,
             Optional.absent());
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK,
-            (new Flags() {}).cellularChargingGcmTaskPeriod(),
+            flags.cellularChargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_CONNECTED,
             Optional.of(cellularOverrides));
 
     verify(mockTaskScheduler)
         .schedulePeriodicTask(
             TaskScheduler.WIFI_CHARGING_PERIODIC_TASK,
-            (new Flags() {}).wifiChargingGcmTaskPeriod(),
+            flags.wifiChargingGcmTaskPeriod(),
             NetworkState.NETWORK_STATE_UNMETERED,
             Optional.of(wifiOverrides));
 
@@ -3188,19 +3590,78 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
-            /* taskSchedulerOptional = */ Optional.absent(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            /* taskSchedulerOptional= */ Optional.absent(),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    expectErrorLogMessage(
+        "MobileDataDownload: Called schedulePeriodicTasksInternal when taskScheduler is not"
+            + " provided.");
 
     mobileDataDownload.schedulePeriodicBackgroundTasks(Optional.absent()).get();
 
     verifyNoInteractions(mockTaskScheduler);
+  }
+
+  @Test
+  public void cancelPeriodicBackgroundTasks_nullTaskScheduler() throws Exception {
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            /* taskSchedulerOptional= */ Optional.absent(),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.absent() /* foregroundDownloadServiceClassOptional */,
+            flags,
+            singleFileDownloader,
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    mobileDataDownload.cancelPeriodicBackgroundTasks().get();
+
+    verifyNoInteractions(mockTaskScheduler);
+  }
+
+  @Test
+  public void cancelPeriodicBackgroundTasks() throws Exception {
+    MobileDataDownload mobileDataDownload =
+        new MobileDataDownloadImpl(
+            context,
+            mockEventLogger,
+            mockMobileDataDownloadManager,
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
+            Optional.of(mockTaskScheduler),
+            fileStorage,
+            /* downloadMonitorOptional= */ Optional.absent(),
+            Optional.absent() /* foregroundDownloadServiceClassOptional */,
+            flags,
+            singleFileDownloader,
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
+
+    mobileDataDownload.cancelPeriodicBackgroundTasks().get();
+
+    verify(mockTaskScheduler).cancelPeriodicTask(TaskScheduler.CHARGING_PERIODIC_TASK);
+
+    verify(mockTaskScheduler).cancelPeriodicTask(TaskScheduler.MAINTENANCE_PERIODIC_TASK);
+
+    verify(mockTaskScheduler).cancelPeriodicTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK);
+
+    verify(mockTaskScheduler).cancelPeriodicTask(TaskScheduler.WIFI_CHARGING_PERIODIC_TASK);
+
+    verifyNoMoreInteractions(mockTaskScheduler);
   }
 
   // A helper function to create a DataFilegroup.
@@ -3249,18 +3710,22 @@ public class MobileDataDownloadTest {
       int[] byteSize,
       String[] checksum,
       String[] url,
-      DeviceNetworkPolicy deviceNetworkPolicy)
-      throws Exception {
-    return ProtoConversionUtil.convert(
-        createDataFileGroup(
-            groupName,
-            ownerPackage,
-            versionNumber,
-            fileId,
-            byteSize,
-            checksum,
-            url,
-            deviceNetworkPolicy));
+      DeviceNetworkPolicy deviceNetworkPolicy) {
+    try {
+      return ProtoConversionUtil.convert(
+          createDataFileGroup(
+              groupName,
+              ownerPackage,
+              versionNumber,
+              fileId,
+              byteSize,
+              checksum,
+              url,
+              deviceNetworkPolicy));
+    } catch (Exception e) {
+      // wrap with runtime exception to avoid this method having to declare throws
+      throw new RuntimeException(e);
+    }
   }
 
   @Test
@@ -3270,15 +3735,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
     when(mockMobileDataDownloadManager.maintenance()).thenReturn(Futures.immediateFuture(null));
 
     mobileDataDownload.handleTask(TaskScheduler.MAINTENANCE_PERIODIC_TASK).get();
@@ -3293,15 +3759,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of(mockFileGroupPopulator),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     when(mockMobileDataDownloadManager.verifyAllPendingGroups(any()))
         .thenReturn(Futures.immediateFuture(null));
@@ -3321,15 +3788,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of(mockFileGroupPopulator),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     when(mockFileGroupPopulator.refreshFileGroups(mobileDataDownload))
         .thenReturn(Futures.immediateFuture(null));
@@ -3349,15 +3817,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of(mockFileGroupPopulator),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     when(mockFileGroupPopulator.refreshFileGroups(mobileDataDownload))
         .thenReturn(Futures.immediateFuture(null));
@@ -3377,15 +3846,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
-            /* fileGroupPopulatorList = */ ImmutableList.of(),
+            controlExecutor,
+            /* fileGroupPopulatorList= */ ImmutableList.of(),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     when(mockMobileDataDownloadManager.verifyAllPendingGroups(any()))
         .thenReturn(Futures.immediateFuture(null));
@@ -3409,15 +3879,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             ImmutableList.of(mockFileGroupPopulator),
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     ExecutionException e =
         assertThrows(
@@ -3454,15 +3925,16 @@ public class MobileDataDownloadTest {
             context,
             mockEventLogger,
             mockMobileDataDownloadManager,
-            EXECUTOR,
+            controlExecutor,
             populators,
             Optional.of(mockTaskScheduler),
             fileStorage,
-            /* downloadMonitorOptional = */ Optional.absent(),
+            /* downloadMonitorOptional= */ Optional.absent(),
             Optional.of(this.getClass()), // don't need to use the real foreground download service.
             flags,
             singleFileDownloader,
-            Optional.absent() /* customFileGroupValidator */);
+            Optional.absent() /* customFileGroupValidator */,
+            timeSource);
 
     when(mockMobileDataDownloadManager.verifyAllPendingGroups(any() /* validator */))
         .thenReturn(Futures.immediateVoidFuture());
@@ -3481,12 +3953,13 @@ public class MobileDataDownloadTest {
 
   @Test
   public void reportUsage_basic() throws Exception {
-    DataFileGroupInternal dataFileGroup = createDefaultDataFileGroupInternal();
-
     when(mockMobileDataDownloadManager.getFileGroup(any(GroupKey.class), eq(true)))
-        .thenReturn(Futures.immediateFuture(dataFileGroup));
-    when(mockMobileDataDownloadManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(onDeviceUri1));
+        .thenReturn(Futures.immediateFuture(FILE_GROUP_INTERNAL_1));
+    when(mockMobileDataDownloadManager.getDataFileUris(
+            FILE_GROUP_INTERNAL_1, /* verifyIsolatedStructure= */ true))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(FILE_GROUP_INTERNAL_1.getFile(0), onDeviceUri1)));
 
     MobileDataDownload mobileDataDownload = createDefaultMobileDataDownload();
 
@@ -3506,8 +3979,15 @@ public class MobileDataDownloadTest {
     verify(mockEventLogger).logMddUsageEvent(createFileGroupStats(clientFileGroup), null);
   }
 
-  private static Void createFileGroupStats(ClientFileGroup clientFileGroup) {
-    return null;
+  private static DataDownloadFileGroupStats createFileGroupStats(ClientFileGroup clientFileGroup) {
+    return DataDownloadFileGroupStats.newBuilder()
+        .setFileGroupName(clientFileGroup.getGroupName())
+        .setOwnerPackage(clientFileGroup.getOwnerPackage())
+        .setFileGroupVersionNumber(clientFileGroup.getVersionNumber())
+        .setFileCount(clientFileGroup.getFileCount())
+        .setVariantId(clientFileGroup.getVariantId())
+        .setBuildId(clientFileGroup.getBuildId())
+        .build();
   }
 
   private MobileDataDownload createDefaultMobileDataDownload() {
@@ -3515,7 +3995,7 @@ public class MobileDataDownloadTest {
         context,
         mockEventLogger,
         mockMobileDataDownloadManager,
-        EXECUTOR,
+        controlExecutor,
         ImmutableList.of() /* fileGroupPopulatorList */,
         Optional.of(mockTaskScheduler),
         fileStorage,
@@ -3523,18 +4003,7 @@ public class MobileDataDownloadTest {
         Optional.of(this.getClass()), // don't need to use the real foreground download service.
         flags,
         singleFileDownloader,
-        Optional.absent() /* customFileGroupValidator */);
-  }
-
-  private DataFileGroupInternal createDefaultDataFileGroupInternal() throws Exception {
-    return createDataFileGroupInternal(
-        FILE_GROUP_NAME_1,
-        context.getPackageName(),
-        1 /* versionNumber */,
-        new String[] {FILE_ID_1},
-        new int[] {FILE_SIZE_1},
-        new String[] {FILE_CHECKSUM_1},
-        new String[] {FILE_URL_1},
-        DeviceNetworkPolicy.DOWNLOAD_ONLY_ON_WIFI);
+        Optional.absent() /* customFileGroupValidator */,
+        timeSource);
   }
 }

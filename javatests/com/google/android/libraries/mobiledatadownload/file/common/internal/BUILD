@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -41,6 +42,17 @@ android_local_test(
 )
 
 android_local_test(
+    name = "ExponentialBackoffIteratorTest",
+    size = "small",
+    srcs = ["ExponentialBackoffIteratorTest.java"],
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:exponential_backoff_iterator",
+        "@androidx_test",
+        "@truth",
+    ],
+)
+
+android_local_test(
     name = "LazyByteArrayInputStreamTest",
     size = "small",
     srcs = ["LazyByteArrayInputStreamTest.java"],
@@ -58,6 +70,7 @@ android_local_test(
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/file/common:fragment",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:lite_transform_fragments",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
         "@com_google_guava_guava",
         "@truth",
     ],

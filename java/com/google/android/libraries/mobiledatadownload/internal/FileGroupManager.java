@@ -17,6 +17,7 @@ package com.google.android.libraries.mobiledatadownload.internal;
 
 import static com.google.android.libraries.mobiledatadownload.tracing.TracePropagation.propagateAsyncFunction;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.util.concurrent.Futures.getDone;
 import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
 import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
@@ -30,7 +31,6 @@ import android.net.Uri;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import android.text.TextUtils;
-import android.util.Pair;
 import androidx.annotation.RequiresApi;
 import com.google.android.libraries.mobiledatadownload.AccountSource;
 import com.google.android.libraries.mobiledatadownload.AggregateException;
@@ -44,8 +44,11 @@ import com.google.android.libraries.mobiledatadownload.account.AccountUtil;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupPair;
 import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
 import com.google.android.libraries.mobiledatadownload.internal.logging.DownloadStateLogger;
+import com.google.android.libraries.mobiledatadownload.internal.logging.DownloadStateLogger.Operation;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.AndroidSharingUtil;
@@ -53,9 +56,9 @@ import com.google.android.libraries.mobiledatadownload.internal.util.AndroidShar
 import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.SymlinkUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedExecutionSequencer;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
-import com.google.auto.value.AutoValue;
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -63,6 +66,7 @@ import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
@@ -82,6 +86,9 @@ import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKeyProperties;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
 import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
+import com.google.mobiledatadownload.LogEnumsProto.MddDownloadResult;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import com.google.protobuf.Any;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -91,6 +98,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
@@ -117,6 +125,9 @@ public class FileGroupManager {
 
     /** The download of at least one file failed. */
     FAILED,
+
+    /** The status of the group is unknown. */
+    UNKNOWN,
   }
 
   private static final String TAG = "FileGroupManager";
@@ -133,6 +144,10 @@ public class FileGroupManager {
   private final Optional<String> instanceId;
   private final DownloadStageManager downloadStageManager;
   private final Flags flags;
+
+  // Create an internal ExecutionSequencer to ensure that certain operations remain synced.
+  private final PropagatedExecutionSequencer futureSerializer =
+      PropagatedExecutionSequencer.create();
 
   @Inject
   public FileGroupManager(
@@ -176,18 +191,22 @@ public class FileGroupManager {
   @SuppressWarnings("nullness")
   public ListenableFuture<Boolean> addGroupForDownload(
       GroupKey groupKey, DataFileGroupInternal receivedGroup)
-      throws ExpiredFileGroupException, IOException, UninstalledAppException,
+      throws ExpiredFileGroupException,
+          IOException,
+          UninstalledAppException,
           ActivationRequiredForGroupException {
     if (FileGroupUtil.isActiveGroupExpired(receivedGroup, timeSource)) {
       LogUtil.e("%s: Trying to add expired group %s.", TAG, groupKey.getGroupName());
-      logEventWithDataFileGroup(0, eventLogger, receivedGroup);
+      logEventWithDataFileGroup(
+          MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, eventLogger, receivedGroup);
       throw new ExpiredFileGroupException();
     }
     if (!isAppInstalled(groupKey.getOwnerPackage())) {
       LogUtil.e(
           "%s: Trying to add group %s for uninstalled app %s.",
           TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
-      logEventWithDataFileGroup(0, eventLogger, receivedGroup);
+      logEventWithDataFileGroup(
+          MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, eventLogger, receivedGroup);
       throw new UninstalledAppException();
     }
 
@@ -210,7 +229,8 @@ public class FileGroupManager {
                       "%s: Trying to add group %s that requires activation %s.",
                       TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
 
-                  logEventWithDataFileGroup(0, eventLogger, receivedGroup);
+                  logEventWithDataFileGroup(
+                      MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, eventLogger, receivedGroup);
 
                   throw new ActivationRequiredForGroupException();
                 }
@@ -222,19 +242,34 @@ public class FileGroupManager {
         .transformAsync(
             voidArg -> isAddedGroupDuplicate(groupKey, receivedGroup), sequentialControlExecutor)
         .transformAsync(
-            isDuplicate -> {
-              if (isDuplicate) {
+            newConfigReason -> {
+              if (!newConfigReason.isPresent()) {
+                // Absent reason means the config is not new
                 LogUtil.d(
                     "%s: Received duplicate config for group: %s", TAG, groupKey.getGroupName());
                 return immediateFuture(false);
               }
+
+              // If supported, set the isolated root before writing to metadata
+              DataFileGroupInternal receivedGroupWithIsolatedRoot =
+                  FileGroupUtil.maybeSetIsolatedRoot(receivedGroup, groupKey);
+
               return transformSequentialAsync(
-                  maybeSetGroupNewFilesReceivedTimestamp(groupKey, receivedGroup),
+                  maybeSetGroupNewFilesReceivedTimestamp(groupKey, receivedGroupWithIsolatedRoot),
                   receivedGroupCopy -> {
                     LogUtil.d(
                         "%s: Received new config for group: %s", TAG, groupKey.getGroupName());
 
-                    logEventWithDataFileGroup(0, eventLogger, receivedGroupCopy);
+                    eventLogger.logNewConfigReceived(
+                        DataDownloadFileGroupStats.newBuilder()
+                            .setFileGroupName(receivedGroupCopy.getGroupName())
+                            .setOwnerPackage(receivedGroupCopy.getOwnerPackage())
+                            .setFileGroupVersionNumber(
+                                receivedGroupCopy.getFileGroupVersionNumber())
+                            .setBuildId(receivedGroupCopy.getBuildId())
+                            .setVariantId(receivedGroupCopy.getVariantId())
+                            .build(),
+                        null);
 
                     return transformSequentialAsync(
                         subscribeGroup(receivedGroupCopy),
@@ -276,7 +311,7 @@ public class FileGroupManager {
         .transformAsync(
             writeSuccess -> {
               if (!writeSuccess) {
-                eventLogger.logEventSampled(0);
+                eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                 return immediateFailedFuture(
                     new IOException("Failed to commit new group metadata to disk."));
               }
@@ -335,7 +370,8 @@ public class FileGroupManager {
                                     "%s: Failed to remove pending version for group: '%s';"
                                         + " account: '%s'",
                                     TAG, groupKey.getGroupName(), groupKey.getAccount());
-                                eventLogger.logEventSampled(0);
+                                eventLogger.logEventSampled(
+                                    MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                                 return immediateFailedFuture(
                                     new IOException(
                                         "Failed to remove pending group: "
@@ -364,7 +400,8 @@ public class FileGroupManager {
                                         "%s: Failed to remove the downloaded version for group:"
                                             + " '%s'; account: '%s'",
                                         TAG, groupKey.getGroupName(), groupKey.getAccount());
-                                    eventLogger.logEventSampled(0);
+                                    eventLogger.logEventSampled(
+                                        MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                                     return immediateFailedFuture(
                                         new IOException(
                                             "Failed to remove downloaded group: "
@@ -379,7 +416,8 @@ public class FileGroupManager {
                                               "%s: Failed to add to stale for group: '%s';"
                                                   + " account: '%s'",
                                               TAG, groupKey.getGroupName(), groupKey.getAccount());
-                                          eventLogger.logEventSampled(0);
+                                          eventLogger.logEventSampled(
+                                              MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                                           return immediateFailedFuture(
                                               new IOException(
                                                   "Failed to add downloaded group to stale: "
@@ -512,7 +550,8 @@ public class FileGroupManager {
                                         "%s: Failed to remove %d pending versions of %d requested"
                                             + " groups",
                                         TAG, pendingGroupsToRemove.size(), groupKeys.size());
-                                    eventLogger.logEventSampled(0);
+                                    eventLogger.logEventSampled(
+                                        MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                                     return immediateFailedFuture(
                                         new IOException(
                                             "Failed to remove pending group keys, count = "
@@ -565,7 +604,8 @@ public class FileGroupManager {
                                     "%s: Failed to remove %d downloaded versions of %d requested"
                                         + " groups",
                                     TAG, downloadedGroupsToRemove.size(), groupKeys.size());
-                                eventLogger.logEventSampled(0);
+                                eventLogger.logEventSampled(
+                                    MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                                 return immediateFailedFuture(
                                     new IOException(
                                         "Failed to remove downloaded groups, count = "
@@ -598,7 +638,7 @@ public class FileGroupManager {
                             LogUtil.e(
                                 "%s: Failed to add to stale for group: '%s';",
                                 TAG, staleGroup.getGroupName());
-                            eventLogger.logEventSampled(0);
+                            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                             return immediateFailedFuture(
                                 new IOException(
                                     "Failed to add downloaded group to stale: "
@@ -668,15 +708,7 @@ public class FileGroupManager {
   public ListenableFuture<@NullableType DataFileGroupInternal> getFileGroup(
       GroupKey groupKey, boolean downloaded) {
     GroupKey downloadedKey = groupKey.toBuilder().setDownloaded(downloaded).build();
-    return transformSequentialAsync(
-        fileGroupsMetadata.read(downloadedKey),
-        dataFileGroup ->
-            transformSequentialAsync(
-                // TODO(b/194688687): consider moving this verification to the
-                // MobileDataDownloadManager level since that is where verification happens for
-                // getDataFileUri.
-                maybeVerifyIsolatedStructure(dataFileGroup, downloaded),
-                result -> immediateFuture(result ? dataFileGroup : null)));
+    return fileGroupsMetadata.read(downloadedKey);
   }
 
   /**
@@ -687,25 +719,24 @@ public class FileGroupManager {
    * pending/downloded states of a file group, so the downloaded status in the given groupKey is not
    * considered by this method.
    *
-   * <p>If a group is found, state of the file group (downloaded/pending) and file group will be
-   * returned in a Pair. If a group is not found, null will be returned. The boolean returned will
-   * be true if the group is downloaded and false if the group is pending.
+   * <p>If a group is found, a {@link GroupKeyAndGroup} will be returned. If a group is not found,
+   * null will be returned. The boolean returned will be true if the group is downloaded and false
+   * if the group is pending.
    *
    * @param groupKey The key for the data to be returned. This is should include group name, owner
    *     package and user account
    * @param buildId The expected buildId of the file group
    * @param variantId The expected variantId of the file group
    * @param customPropertyOptional The expected customProperty, if necessary
-   * @return A ListenableFuture that resolves, if the requested group is found, with a Pair
-   *     containing Boolean value of whether or not the Group is downloaded and the Group itself, or
-   *     null otherwise.
+   * @return A ListenableFuture that resolves, if the requested group is found, to a {@link
+   *     GroupKeyAndGroup}, or null if no group is found.
    */
-  private ListenableFuture<@NullableType Pair<Boolean, DataFileGroupInternal>> getGroupPairById(
+  private ListenableFuture<@NullableType GroupKeyAndGroup> getGroupPairById(
       GroupKey groupKey, long buildId, String variantId, Optional<Any> customPropertyOptional) {
     return transformSequential(
         fileGroupsMetadata.getAllFreshGroups(),
         freshGroupPairList -> {
-          for (Pair<GroupKey, DataFileGroupInternal> freshGroupPair : freshGroupPairList) {
+          for (GroupKeyAndGroup freshGroupPair : freshGroupPairList) {
             if (!verifyGroupPairMatchesIdentifiers(
                 freshGroupPair,
                 groupKey.getAccount(),
@@ -717,19 +748,19 @@ public class FileGroupManager {
             }
 
             // Group matches ID, but ensure that it also matches requested group name
-            if (!groupKey.getGroupName().equals(freshGroupPair.first.getGroupName())) {
+            if (!groupKey.getGroupName().equals(freshGroupPair.groupKey().getGroupName())) {
               LogUtil.e(
                   "%s: getGroupPairById: Group %s matches the given buildId = %d and variantId ="
                       + " %s, but does not match the given group name %s",
                   TAG,
-                  freshGroupPair.first.getGroupName(),
+                  freshGroupPair.groupKey().getGroupName(),
                   buildId,
                   variantId,
                   groupKey.getGroupName());
               continue;
             }
 
-            return Pair.create(freshGroupPair.first.getDownloaded(), freshGroupPair.second);
+            return freshGroupPair;
           }
 
           // No compatible group found, return null;
@@ -790,7 +821,7 @@ public class FileGroupManager {
                 fileGroupsMetadata.remove(groupKey),
                 removeSuccess -> {
                   if (!removeSuccess) {
-                    eventLogger.logEventSampled(0);
+                    eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                   }
                   return immediateVoidFuture();
                 });
@@ -842,11 +873,11 @@ public class FileGroupManager {
     DownloadStateLogger downloadStateLogger = DownloadStateLogger.forImport(eventLogger);
 
     // Get group that should be updated for import, or return group not found failure
-    ListenableFuture<Pair<Boolean, DataFileGroupInternal>> groupPairToUpdateFuture =
+    ListenableFuture<GroupKeyAndGroup> groupKeyAndGroupToUpdateFuture =
         transformSequentialAsync(
             getGroupPairById(groupKey, buildId, variantId, customPropertyOptional),
-            foundGroupPair -> {
-              if (foundGroupPair == null) {
+            foundGroupKeyAndGroup -> {
+              if (foundGroupKeyAndGroup == null) {
                 // Group with identifiers could not be found, return failure.
                 LogUtil.e(
                     "%s: importFiles for group name: %s, buildId: %d, variantId: %s, but no group"
@@ -863,16 +894,17 @@ public class FileGroupManager {
               }
 
               // wrap in checkNotNull to ensure type safety.
-              return immediateFuture(checkNotNull(foundGroupPair));
+              return immediateFuture(checkNotNull(foundGroupKeyAndGroup));
             });
 
-    return PropagatedFluentFuture.from(groupPairToUpdateFuture)
+    return PropagatedFluentFuture.from(groupKeyAndGroupToUpdateFuture)
         .transformAsync(
-            groupPairToUpdate -> {
+            groupKeyAndGroupToUpdate -> {
               // Perform an in-memory merge of updatedDataFileList into the group, so we get the
               // correct list of files to import.
               DataFileGroupInternal mergedFileGroup =
-                  mergeFilesIntoFileGroup(updatedDataFileList, groupPairToUpdate.second);
+                  mergeFilesIntoFileGroup(
+                      updatedDataFileList, groupKeyAndGroupToUpdate.dataFileGroup());
 
               // Log the start of the import now that we have the group.
               downloadStateLogger.logStarted(mergedFileGroup);
@@ -898,7 +930,8 @@ public class FileGroupManager {
             sequentialControlExecutor)
         .transformAsync(
             mergedFileGroup -> {
-              boolean groupIsDownloaded = Futures.getDone(groupPairToUpdateFuture).first;
+              boolean groupIsDownloaded =
+                  Futures.getDone(groupKeyAndGroupToUpdateFuture).groupKey().getDownloaded();
 
               // If we are updating a pending group and the import is successful, the pending
               // version should be removed from metadata.
@@ -913,12 +946,15 @@ public class FileGroupManager {
                   PropagatedFutures.whenAllComplete(allImportFutures)
                       .callAsync(
                           () ->
-                              verifyGroupDownloaded(
-                                  groupKey,
-                                  mergedFileGroup,
-                                  removePendingVersion,
-                                  customFileGroupValidator,
-                                  downloadStateLogger),
+                              futureSerializer.submitAsync(
+                                  () ->
+                                      verifyGroupDownloaded(
+                                          groupKey,
+                                          mergedFileGroup,
+                                          removePendingVersion,
+                                          customFileGroupValidator,
+                                          downloadStateLogger),
+                                  sequentialControlExecutor),
                           sequentialControlExecutor);
               return transformSequentialAsync(
                   combinedImportFuture,
@@ -932,7 +968,16 @@ public class FileGroupManager {
                     // We log other results in verifyGroupDownloaded, so only check for
                     // downloaded here.
                     if (groupDownloadStatus == GroupDownloadStatus.DOWNLOADED) {
-                      eventLogger.logMddDownloadResult(0, null);
+                      eventLogger.logMddDownloadResult(
+                          MddDownloadResult.Code.SUCCESS,
+                          DataDownloadFileGroupStats.newBuilder()
+                              .setFileGroupName(groupKey.getGroupName())
+                              .setOwnerPackage(groupKey.getOwnerPackage())
+                              .setFileGroupVersionNumber(
+                                  mergedFileGroup.getFileGroupVersionNumber())
+                              .setBuildId(mergedFileGroup.getBuildId())
+                              .setVariantId(mergedFileGroup.getVariantId())
+                              .build());
                       // group downloaded, so it will be written in verifyGroupDownloaded, return
                       // early.
                       return immediateVoidFuture();
@@ -948,7 +993,7 @@ public class FileGroupManager {
                             mergedFileGroup),
                         writeSuccess -> {
                           if (!writeSuccess) {
-                            eventLogger.logEventSampled(0);
+                            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                             return immediateFailedFuture(
                                 DownloadException.builder()
                                     .setMessage(
@@ -1016,13 +1061,13 @@ public class FileGroupManager {
    * </ul>
    */
   private static boolean verifyGroupPairMatchesIdentifiers(
-      Pair<GroupKey, DataFileGroupInternal> groupPair,
+      GroupKeyAndGroup groupPair,
       String serializedAccount,
       long buildId,
       String variantId,
       Optional<Any> customPropertyOptional) {
-    DataFileGroupInternal fileGroup = groupPair.second;
-    if (!groupPair.first.getAccount().equals(serializedAccount)) {
+    DataFileGroupInternal fileGroup = groupPair.dataFileGroup();
+    if (!groupPair.groupKey().getAccount().equals(serializedAccount)) {
       LogUtil.v(
           "%s: verifyGroupPairMatchesIdentifiers failed for group %s due to mismatched account",
           TAG, fileGroup.getGroupName());
@@ -1211,17 +1256,42 @@ public class FileGroupManager {
                         return PropagatedFutures.whenAllComplete(allFileFutures)
                             .callAsync(
                                 () ->
-                                    transformSequentialAsync(
-                                        verifyPendingGroupDownloaded(
-                                            groupKey,
-                                            updatedPendingGroup,
-                                            customFileGroupValidator),
-                                        groupDownloadStatus ->
-                                            finalizeDownloadFileFutures(
-                                                allFileFutures,
-                                                groupDownloadStatus,
-                                                updatedPendingGroup,
-                                                groupKey)),
+                                    futureSerializer.submitAsync(
+                                        () ->
+                                            transformSequentialAsync(
+                                                getGroupPair(groupKey),
+                                                groupPair -> {
+                                                  @NullableType
+                                                  DataFileGroupInternal groupToVerify =
+                                                      groupPair.pendingGroup() != null
+                                                          ? groupPair.pendingGroup()
+                                                          : groupPair.downloadedGroup();
+                                                  if (groupToVerify != null) {
+                                                    return transformSequentialAsync(
+                                                        verifyGroupDownloaded(
+                                                            groupKey,
+                                                            groupToVerify,
+                                                            /* removePendingVersion= */ true,
+                                                            customFileGroupValidator,
+                                                            DownloadStateLogger.forDownload(
+                                                                eventLogger)),
+                                                        groupDownloadStatus ->
+                                                            finalizeDownloadFileFutures(
+                                                                allFileFutures,
+                                                                groupDownloadStatus,
+                                                                groupToVerify,
+                                                                groupKey));
+                                                  } else {
+                                                    // No group to verify, which should be
+                                                    // impossible -- force a failure state so we can
+                                                    // track any download file failures.
+                                                    handleDownloadFileFutureFailures(
+                                                        allFileFutures, groupKey);
+                                                    return immediateFailedFuture(
+                                                        new AssertionError("impossible error"));
+                                                  }
+                                                }),
+                                        sequentialControlExecutor),
                                 sequentialControlExecutor);
                       },
                       sequentialControlExecutor);
@@ -1277,6 +1347,24 @@ public class FileGroupManager {
               voidArg -> {
                 throw exception;
               });
+        },
+        sequentialControlExecutor);
+  }
+
+  private ListenableFuture<GroupPair> getGroupPair(GroupKey groupKey) {
+    return PropagatedFutures.submitAsync(
+        () -> {
+          ListenableFuture<@NullableType DataFileGroupInternal> pendingGroupFuture =
+              getFileGroup(groupKey, /* downloaded= */ false);
+          ListenableFuture<@NullableType DataFileGroupInternal> downloadedGroupFuture =
+              getFileGroup(groupKey, /* downloaded= */ true);
+          return PropagatedFutures.whenAllSucceed(pendingGroupFuture, downloadedGroupFuture)
+              .callAsync(
+                  () ->
+                      immediateFuture(
+                          GroupPair.create(
+                              getDone(pendingGroupFuture), getDone(downloadedGroupFuture))),
+                  sequentialControlExecutor);
         },
         sequentialControlExecutor);
   }
@@ -1364,23 +1452,38 @@ public class FileGroupManager {
     // TODO(b/136112848): When all fileFutures succeed, we don't need to verify them again. However
     // we still need logic to remove pending and update stale group.
     if (groupDownloadStatus != GroupDownloadStatus.DOWNLOADED) {
-      LogUtil.e(
-          "%s downloadFileGroup %s %s can't finish!",
-          TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
-
-      AggregateException.throwIfFailed(
-          allFileFutures, "Failed to download file group %s", groupKey.getGroupName());
-
-      // TODO(b/118137672): Investigate on the unknown error that we've missed. There is a download
-      // failure that we don't recognize.
-      LogUtil.e("%s: An unknown error has occurred during" + " download", TAG);
-      throw DownloadException.builder()
-          .setDownloadResultCode(DownloadResultCode.UNKNOWN_ERROR)
-          .build();
+      handleDownloadFileFutureFailures(allFileFutures, groupKey);
     }
 
-    eventLogger.logMddDownloadResult(0, null);
+    eventLogger.logMddDownloadResult(
+        MddDownloadResult.Code.SUCCESS,
+        DataDownloadFileGroupStats.newBuilder()
+            .setFileGroupName(groupKey.getGroupName())
+            .setOwnerPackage(groupKey.getOwnerPackage())
+            .setFileGroupVersionNumber(pendingGroup.getFileGroupVersionNumber())
+            .setBuildId(pendingGroup.getBuildId())
+            .setVariantId(pendingGroup.getVariantId())
+            .build());
     return immediateFuture(pendingGroup);
+  }
+
+  // Requires that all futures in allFileFutures are completed.
+  private void handleDownloadFileFutureFailures(
+      List<ListenableFuture<Void>> allFileFutures, GroupKey groupKey)
+      throws DownloadException, AggregateException {
+    LogUtil.e(
+        "%s downloadFileGroup %s %s can't finish!",
+        TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
+
+    AggregateException.throwIfFailed(
+        allFileFutures, "Failed to download file group %s", groupKey.getGroupName());
+
+    // TODO(b/118137672): Investigate on the unknown error that we've missed. There is a download
+    // failure that we don't recognize.
+    LogUtil.e("%s: An unknown error has occurred during" + " download", TAG);
+    throw DownloadException.builder()
+        .setDownloadResultCode(DownloadResultCode.UNKNOWN_ERROR)
+        .build();
   }
 
   /**
@@ -1475,7 +1578,7 @@ public class FileGroupManager {
                     fileGroup,
                     dataFile,
                     fileStorage,
-                    /* afterDownload = */ false);
+                    /* afterDownload= */ false);
                 return transformSequentialAsync(
                     maybeUpdateLeaseAndSharedMetadata(
                         fileGroup,
@@ -1589,7 +1692,6 @@ public class FileGroupManager {
                         0),
                     res -> {
                       if (res) {
-                        deleteLocalCopy(downloadFileOnDeviceUri, fileGroup, dataFile);
                         return immediateVoidFuture();
                       }
                       return updateMaxExpirationDateSecs(
@@ -1610,7 +1712,7 @@ public class FileGroupManager {
                     fileGroup,
                     dataFile,
                     fileStorage,
-                    /* afterDownload = */ true);
+                    /* afterDownload= */ true);
                 return transformSequentialAsync(
                     maybeUpdateLeaseAndSharedMetadata(
                         fileGroup,
@@ -1622,7 +1724,6 @@ public class FileGroupManager {
                         0),
                     res -> {
                       if (res) {
-                        deleteLocalCopy(downloadFileOnDeviceUri, fileGroup, dataFile);
                         return immediateVoidFuture();
                       }
                       return updateMaxExpirationDateSecs(
@@ -1740,25 +1841,12 @@ public class FileGroupManager {
             dataFile.getChecksum(),
             silentFeedback,
             instanceId,
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     if (downloadFileOnDeviceUri == null) {
       LogUtil.e("%s: Failed to get file uri!", TAG);
       throw new AndroidSharingException(0, "Failed to get local file uri");
     }
     return downloadFileOnDeviceUri;
-  }
-
-  private void deleteLocalCopy(
-      Uri downloadFileOnDeviceUri, DataFileGroupInternal fileGroup, DataFile dataFile) {
-    try {
-      fileStorage.deleteFile(downloadFileOnDeviceUri);
-    } catch (IOException e) {
-      LogUtil.e(
-          "%s: Failed to delete the local copy after android-sharing the file"
-              + " %s, file group %s",
-          TAG, dataFile.getFileId(), fileGroup.getGroupName());
-      logMddAndroidSharingLog(eventLogger, fileGroup, dataFile, 0);
-    }
   }
 
   /**
@@ -1842,30 +1930,8 @@ public class FileGroupManager {
   }
 
   /**
-   * Verifies that the given pending group was downloaded, and updates the metadata if the download
-   * has completed.
-   *
-   * @param groupKey The key of the group to verify for download.
-   * @param pendingGroup The group to verify for download.
-   * @return A future that resolves to true if the given group was verify for download, false
-   *     otherwise.
-   */
-  // TODO(b/124072754): Change to package private once all code is refactored.
-  public ListenableFuture<GroupDownloadStatus> verifyPendingGroupDownloaded(
-      GroupKey groupKey,
-      DataFileGroupInternal pendingGroup,
-      AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
-    return verifyGroupDownloaded(
-        groupKey,
-        pendingGroup,
-        /* removePendingVersion = */ true,
-        customFileGroupValidator,
-        /* downloadStateLogger = */ DownloadStateLogger.forDownload(eventLogger));
-  }
-
-  /**
-   * Verifies that the given pending group was downloaded, and updates the metadata if the download
-   * has completed.
+   * Verifies that the given group was downloaded, and updates the metadata if the download has
+   * completed.
    *
    * @param groupKey The key of the group to verify for download.
    * @param fileGroup The group to verify for download.
@@ -1874,7 +1940,7 @@ public class FileGroupManager {
    * @return A future that resolves to true if the given group was verify for download, false
    *     otherwise.
    */
-  private ListenableFuture<GroupDownloadStatus> verifyGroupDownloaded(
+  ListenableFuture<GroupDownloadStatus> verifyGroupDownloaded(
       GroupKey groupKey,
       DataFileGroupInternal fileGroup,
       boolean removePendingVersion,
@@ -1887,6 +1953,11 @@ public class FileGroupManager {
     GroupKey downloadedGroupKey = groupKey.toBuilder().setDownloaded(true).build();
     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
 
+    // It's possible that we are calling verifyGroupDownloaded concurrently, which would lead to
+    // multiple DOWNLOAD_COMPLETE logs. To prevent this, we check to see if we've already logged the
+    // timestamp so we can skip logging later.
+    boolean completeAlreadyLogged =
+        fileGroup.getBookkeeping().hasGroupDownloadedTimestampInMillis();
     DataFileGroupInternal downloadedFileGroupWithTimestamp =
         FileGroupUtil.setDownloadedTimestampInMillis(fileGroup, timeSource.currentTimeMillis());
 
@@ -1917,6 +1988,8 @@ public class FileGroupManager {
                         // supported
                         if (FileGroupUtil.isIsolatedStructureAllowed(fileGroup)
                             && VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) {
+                          // TODO(b/225409326): Prevent race condition where recreation of isolated
+                          // paths happens at the same time as group access.
                           return createIsolatedFilePaths(fileGroup);
                         }
                         return immediateVoidFuture();
@@ -1939,7 +2012,12 @@ public class FileGroupManager {
                   .transformAsync(this::addGroupAsStaleIfPresent, sequentialControlExecutor)
                   .transform(
                       voidArg -> {
-                        downloadStateLogger.logComplete(downloadedFileGroupWithTimestamp);
+                        // Only log complete if we are performing an import operation OR we haven't
+                        // already logged a download complete event.
+                        if (!completeAlreadyLogged
+                            || downloadStateLogger.getOperation() == Operation.IMPORT) {
+                          downloadStateLogger.logComplete(downloadedFileGroupWithTimestamp);
+                        }
                         return GroupDownloadStatus.DOWNLOADED;
                       },
                       sequentialControlExecutor);
@@ -1966,7 +2044,7 @@ public class FileGroupManager {
         .transformAsync(
             writeSuccess -> {
               if (!writeSuccess) {
-                eventLogger.logEventSampled(0);
+                eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                 return immediateFailedFuture(
                     new IOException(
                         "Failed to write updated group: " + downloadedGroupKey.getGroupName()));
@@ -1985,7 +2063,7 @@ public class FileGroupManager {
         fileGroupsMetadata.remove(pendingGroupKey),
         removeSuccess -> {
           if (!removeSuccess) {
-            eventLogger.logEventSampled(0);
+            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
           }
           return toReturn;
         });
@@ -2019,7 +2097,7 @@ public class FileGroupManager {
                           "%s: Failed to remove pending version for group: '%s';"
                               + " account: '%s'",
                           TAG, pendingGroupKey.getGroupName(), pendingGroupKey.getAccount());
-                      eventLogger.logEventSampled(0);
+                      eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                       return immediateFailedFuture(
                           new IOException(
                               "Failed to remove pending group: " + pendingGroupKey.getGroupName()));
@@ -2050,7 +2128,7 @@ public class FileGroupManager {
             // unaccounted for, and the files will get deleted
             // in the next daily maintenance, hence not
             // enforcing its stale lifetime.
-            eventLogger.logEventSampled(0);
+            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
           }
           return immediateVoidFuture();
         });
@@ -2087,28 +2165,31 @@ public class FileGroupManager {
               .setCause(e)
               .build());
     }
-    List<ListenableFuture<Void>> createSymlinkFutures =
-        new ArrayList<>(dataFileGroup.getFileCount());
 
-    for (DataFile dataFile : dataFileGroup.getFileList()) {
-      if (dataFile.getAndroidSharingType() == AndroidSharingType.ANDROID_BLOB_WHEN_AVAILABLE) {
-        createSymlinkFutures.add(
-            immediateFailedFuture(
-                new UnsupportedOperationException(
-                    "Preserve File Paths is invalid with Android Blob Sharing")));
-        // break out of loop since we've already hit a failure.
-        break;
-      }
+    List<DataFile> dataFiles = dataFileGroup.getFileList();
 
-      // Get the original path
-      ListenableFuture<Void> createSymlinkFuture =
-          transformSequentialAsync(
-              getOnDeviceUri(dataFile, dataFileGroup),
-              (Uri originalUri) -> {
-                Uri symlinkUri =
-                    FileGroupUtil.getIsolatedFileUri(context, instanceId, dataFile, dataFileGroup);
+    if (Iterables.tryFind(
+            dataFiles,
+            dataFile ->
+                dataFile.getAndroidSharingType() == AndroidSharingType.ANDROID_BLOB_WHEN_AVAILABLE)
+        .isPresent()) {
+      // Creating isolated structure is not supported when android sharing is enabled in the group;
+      // return immediately.
+      return immediateFailedFuture(
+          new UnsupportedOperationException(
+              "Preserve File Paths is invalid with Android Blob Sharing"));
+    }
 
+    ImmutableMap<DataFile, Uri> isolatedFileUriMap = getIsolatedFileUris(dataFileGroup);
+    ListenableFuture<Void> createIsolatedStructureFuture =
+        PropagatedFutures.transformAsync(
+            getOnDeviceUris(dataFileGroup),
+            onDeviceUriMap -> {
+              for (DataFile dataFile : dataFiles) {
                 try {
+                  Uri symlinkUri = checkNotNull(isolatedFileUriMap.get(dataFile));
+                  Uri originalUri = checkNotNull(onDeviceUriMap.get(dataFile));
+
                   // Check/create parent dir of symlink.
                   Uri symlinkParentDir =
                       Uri.parse(
@@ -2118,8 +2199,8 @@ public class FileGroupManager {
                   if (!fileStorage.exists(symlinkParentDir)) {
                     fileStorage.createDirectory(symlinkParentDir);
                   }
-                  SymlinkUtil.createSymlink(context, symlinkUri, checkNotNull(originalUri));
-                } catch (IOException e) {
+                  SymlinkUtil.createSymlink(context, symlinkUri, originalUri);
+                } catch (NullPointerException | IOException e) {
                   return immediateFailedFuture(
                       DownloadException.builder()
                           .setDownloadResultCode(
@@ -2128,15 +2209,13 @@ public class FileGroupManager {
                           .setCause(e)
                           .build());
                 }
-                return immediateVoidFuture();
-              });
-      createSymlinkFutures.add(createSymlinkFuture);
-    }
-    ListenableFuture<Void> combinedFuture =
-        Futures.whenAllSucceed(createSymlinkFutures).call(() -> null, sequentialControlExecutor);
+              }
+              return immediateVoidFuture();
+            },
+            sequentialControlExecutor);
 
     PropagatedFutures.addCallback(
-        combinedFuture,
+        createIsolatedStructureFuture,
         new FutureCallback<Void>() {
           @Override
           public void onSuccess(Void unused) {}
@@ -2155,29 +2234,7 @@ public class FileGroupManager {
         },
         sequentialControlExecutor);
 
-    return combinedFuture;
-  }
-
-  /**
-   * Gets the Isolated File Uri and verifies that it exists and points to the given uri.
-   *
-   * <p>Throws IOException when verifying the symlink fails.
-   */
-  @RequiresApi(VERSION_CODES.LOLLIPOP)
-  Uri getAndVerifyIsolatedFileUri(
-      Uri originalFileUri, DataFile dataFile, DataFileGroupInternal dataFileGroup)
-      throws IOException {
-    Uri isolatedFileUri =
-        FileGroupUtil.getIsolatedFileUri(context, instanceId, dataFile, dataFileGroup);
-
-    Uri targetFileUri = SymlinkUtil.readSymlink(context, isolatedFileUri);
-
-    if (!fileStorage.exists(isolatedFileUri)
-        || !targetFileUri.toString().equals(originalFileUri.toString())) {
-      throw new IOException("Isolated file uri does not exist or points to an unexpected target");
-    }
-
-    return isolatedFileUri;
+    return createIsolatedStructureFuture;
   }
 
   /**
@@ -2201,7 +2258,7 @@ public class FileGroupManager {
    *
    * <p>This method is annotated with @TargetApi(21) since symlink structure methods require API
    * level 21 or later. The FileGroupUtil.isIsolatedStructureAllowed check will ensure this
-   * condition is met before calling getAndVerifyIsolatedFileUri and createIsolatedFilePaths.
+   * condition is met before calling verifyIsolatedFileUris and createIsolatedFilePaths.
    *
    * @return Future that resolves to true if the isolated structure is verified, or false if the
    *     structure couldn't be verified
@@ -2217,36 +2274,24 @@ public class FileGroupManager {
       return immediateFuture(true);
     }
 
-    List<ListenableFuture<Void>> verifyIsolatedFileFutures =
-        new ArrayList<>(dataFileGroup.getFileCount());
-    for (DataFile dataFile : dataFileGroup.getFileList()) {
-      verifyIsolatedFileFutures.add(
-          transformSequentialAsync(
-              getOnDeviceUri(dataFile, dataFileGroup),
-              onDeviceUri -> {
-                if (onDeviceUri != null) {
-                  Uri unused = getAndVerifyIsolatedFileUri(onDeviceUri, dataFile, dataFileGroup);
+    return PropagatedFluentFuture.from(getOnDeviceUris(dataFileGroup))
+        .transform(
+            onDeviceUriMap -> {
+              ImmutableMap<DataFile, Uri> verifiedUriMap =
+                  verifyIsolatedFileUris(getIsolatedFileUris(dataFileGroup), onDeviceUriMap);
+              for (DataFile dataFile : dataFileGroup.getFileList()) {
+                if (!verifiedUriMap.containsKey(dataFile)) {
+                  // File is missing from map, so verification failed, log this error and return
+                  // false.
+                  LogUtil.w(
+                      "%s: Detected corruption of isolated structure for group %s %s",
+                      TAG, dataFileGroup.getGroupName(), dataFile.getFileId());
+                  return false;
                 }
-                return immediateVoidFuture();
-              }));
-    }
-
-    return PropagatedFutures.catching(
-        Futures.whenAllSucceed(verifyIsolatedFileFutures)
-            .call(() -> true, sequentialControlExecutor),
-        IOException.class,
-        ex -> {
-          // TODO(b/194688687): Log these events to clearcut along with their file group info so
-          // we can understand how often this is happening.
-          LogUtil.w(
-              ex,
-              "%s: Detected corruption of isolated structure for group %s",
-              TAG,
-              dataFileGroup.getGroupName());
-
-          return false;
-        },
-        sequentialControlExecutor);
+              }
+              return true;
+            },
+            sequentialControlExecutor);
   }
 
   /**
@@ -2272,6 +2317,119 @@ public class FileGroupManager {
   }
 
   /**
+   * Gets the on-device uri of the given list of {@link DataFile}s.
+   *
+   * <p>Checks for sideloading support. If the file is sideloaded and sideloading is enabled, the
+   * sideloaded uri will be returned immediately. If sideloading is not enabled, returns a faliure.
+   *
+   * <p>If file is not sideloaded, delegates to {@link SharedFileManager#getOnDeviceUris()}.
+   *
+   * <p>NOTE: The returned map will contain entries for all data files with a known uri. If the uri
+   * is unable to be calculated, it will not be included in the returned list.
+   */
+  ListenableFuture<ImmutableMap<DataFile, Uri>> getOnDeviceUris(
+      DataFileGroupInternal dataFileGroup) {
+    ImmutableMap.Builder<DataFile, Uri> onDeviceUriMap = ImmutableMap.builder();
+    ImmutableMap.Builder<DataFile, NewFileKey> nonSideloadedKeyMapBuilder = ImmutableMap.builder();
+    for (DataFile dataFile : dataFileGroup.getFileList()) {
+      if (FileGroupUtil.isSideloadedFile(dataFile)) {
+        // Sideloaded file -- put in map immediately
+        onDeviceUriMap.put(dataFile, Uri.parse(dataFile.getUrlToDownload()));
+      } else {
+        // Non sideloaded file -- mark for further lookup
+        nonSideloadedKeyMapBuilder.put(
+            dataFile,
+            SharedFilesMetadata.createKeyFromDataFile(
+                dataFile, dataFileGroup.getAllowedReadersEnum()));
+      }
+    }
+    ImmutableMap<DataFile, NewFileKey> nonSideloadedKeyMap =
+        nonSideloadedKeyMapBuilder.buildKeepingLast();
+
+    return PropagatedFluentFuture.from(
+            sharedFileManager.getOnDeviceUris(ImmutableSet.copyOf(nonSideloadedKeyMap.values())))
+        .transform(
+            nonSideloadedUriMap -> {
+              // Extract the <DataFile, Uri> entries from the two non-sideloaded maps.
+              // DataFile -> NewFileKey -> Uri now becomes DataFile -> Uri
+              for (Entry<DataFile, NewFileKey> keyMapEntry : nonSideloadedKeyMap.entrySet()) {
+                NewFileKey newFileKey = keyMapEntry.getValue();
+                if (newFileKey != null && nonSideloadedUriMap.containsKey(newFileKey)) {
+                  onDeviceUriMap.put(keyMapEntry.getKey(), nonSideloadedUriMap.get(newFileKey));
+                }
+              }
+              return onDeviceUriMap.buildKeepingLast();
+            },
+            sequentialControlExecutor);
+  }
+
+  /**
+   * Helper method to get a map of isolated file uris.
+   *
+   * <p>This method does not check whether or not isolated uris are allowed to be created/used, but
+   * simply returns all calculated isolated file uris. The caller is responsible for checking if the
+   * returned uris can/should be used!
+   */
+  ImmutableMap<DataFile, Uri> getIsolatedFileUris(DataFileGroupInternal dataFileGroup) {
+    ImmutableMap.Builder<DataFile, Uri> isolatedFileUrisBuilder = ImmutableMap.builder();
+    Uri isolatedRootUri =
+        FileGroupUtil.getIsolatedRootDirectory(context, instanceId, dataFileGroup);
+    for (DataFile dataFile : dataFileGroup.getFileList()) {
+      isolatedFileUrisBuilder.put(
+          dataFile, FileGroupUtil.appendIsolatedFileUri(isolatedRootUri, dataFile));
+    }
+    return isolatedFileUrisBuilder.buildKeepingLast();
+  }
+
+  /**
+   * Verify the given isolated uris point to the given on-device uris.
+   *
+   * <p>The verification steps include 1) ensuring each isolated uri exists; 2) each isolated uri
+   * points to the corresponding on-device uri. Isolated uris and on-device uris will be matched by
+   * their {@link DataFile} keys from the input maps.
+   *
+   * <p>Each verified isolated uri is included in the return map. If an isolated uri cannot be
+   * verified, no entry for the corresponding data file will be included in the return map.
+   *
+   * <p>If an entry for a DataFile key is missing from either input map, it is also omitted from the
+   * return map (i.e. this method returns an INNER JOIN of the two input maps)
+   *
+   * @return map of isolated uris which have been verified
+   */
+  @RequiresApi(VERSION_CODES.LOLLIPOP)
+  ImmutableMap<DataFile, Uri> verifyIsolatedFileUris(
+      ImmutableMap<DataFile, Uri> isolatedFileUris, ImmutableMap<DataFile, Uri> onDeviceUris) {
+    ImmutableMap.Builder<DataFile, Uri> verifiedUriMapBuilder = ImmutableMap.builder();
+    for (Entry<DataFile, Uri> onDeviceEntry : onDeviceUris.entrySet()) {
+      // Skip null/missing uris
+      if (onDeviceEntry.getValue() == null
+          || !isolatedFileUris.containsKey(onDeviceEntry.getKey())) {
+        continue;
+      }
+
+      Uri isolatedUri = isolatedFileUris.get(onDeviceEntry.getKey());
+      Uri onDeviceUri = onDeviceEntry.getValue();
+
+      try {
+        Uri targetFileUri = SymlinkUtil.readSymlink(context, isolatedUri);
+        if (fileStorage.exists(isolatedUri)
+            && targetFileUri.toString().equals(onDeviceUri.toString())) {
+          verifiedUriMapBuilder.put(onDeviceEntry.getKey(), isolatedUri);
+        } else {
+          LogUtil.e(
+              "%s verifyIsolatedFileUris unable to get isolated file uri! %s %s",
+              TAG, isolatedUri, onDeviceUri);
+        }
+      } catch (IOException e) {
+        LogUtil.e(
+            "%s verifyIsolatedFileUris unable to get isolated file uri! %s %s",
+            TAG, isolatedUri, onDeviceUri);
+      }
+    }
+    return verifiedUriMapBuilder.buildKeepingLast();
+  }
+
+  /**
    * Get the current status of the file group. Since the status of the group is not stored in the
    * file group, this method iterates over all files and re-calculates the current status.
    *
@@ -2281,9 +2439,9 @@ public class FileGroupManager {
       DataFileGroupInternal dataFileGroup) {
     return getFileGroupDownloadStatusIter(
         dataFileGroup,
-        /* downloadFailed = */ false,
-        /* downloadPending = */ false,
-        /* index = */ 0,
+        /* downloadFailed= */ false,
+        /* downloadPending= */ false,
+        /* index= */ 0,
         dataFileGroup.getFileCount());
   }
 
@@ -2335,7 +2493,7 @@ public class FileGroupManager {
                   return getFileGroupDownloadStatusIter(
                       dataFileGroup,
                       downloadFailed,
-                      /* downloadPending = */ true,
+                      /* downloadPending= */ true,
                       index + 1,
                       fileCount);
                 } else {
@@ -2344,7 +2502,7 @@ public class FileGroupManager {
                       TAG, dataFile.getFileId(), dataFileGroup.getGroupName());
                   return getFileGroupDownloadStatusIter(
                       dataFileGroup,
-                      /* downloadFailed = */ true,
+                      /* downloadFailed= */ true,
                       downloadPending,
                       index + 1,
                       fileCount);
@@ -2376,9 +2534,6 @@ public class FileGroupManager {
                 verifyAllPendingGroupsDownloaded(groupKeyList, customFileGroupValidator)));
   }
 
-  @SuppressWarnings("nullness")
-  // Suppress nullness warnings because otherwise static analysis would require us to falsely label
-  // verifyPendingGroupDownloaded with @NullableType
   private ListenableFuture<Void> verifyAllPendingGroupsDownloaded(
       List<GroupKey> groupKeyList,
       AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
@@ -2389,13 +2544,18 @@ public class FileGroupManager {
       }
       allFileFutures.add(
           transformSequentialAsync(
-              fileGroupsMetadata.read(groupKey),
+              getFileGroup(groupKey, /* downloaded= */ false),
               pendingGroup -> {
+                // If no pending group exists for this group key, skip the verification.
                 if (pendingGroup == null) {
-                  return immediateFuture(null);
+                  return immediateFuture(GroupDownloadStatus.PENDING);
                 }
-                return verifyPendingGroupDownloaded(
-                    groupKey, pendingGroup, customFileGroupValidator);
+                return verifyGroupDownloaded(
+                    groupKey,
+                    pendingGroup,
+                    /* removePendingVersion= */ true,
+                    customFileGroupValidator,
+                    DownloadStateLogger.forDownload(eventLogger));
               }));
     }
     return PropagatedFutures.whenAllComplete(allFileFutures)
@@ -2420,12 +2580,13 @@ public class FileGroupManager {
                         LogUtil.d(
                             "%s: Deleting file group %s for uninstalled app %s",
                             TAG, key.getGroupName(), key.getOwnerPackage());
-                        eventLogger.logEventSampled(0);
+                        eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                         return transformSequentialAsync(
                             fileGroupsMetadata.remove(key),
                             removeSuccess -> {
                               if (!removeSuccess) {
-                                eventLogger.logEventSampled(0);
+                                eventLogger.logEventSampled(
+                                    MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                               }
                               return immediateVoidFuture();
                             });
@@ -2474,14 +2635,16 @@ public class FileGroupManager {
                       LogUtil.d(
                           "%s: Deleting file group %s for removed account %s",
                           TAG, key.getGroupName(), key.getOwnerPackage());
-                      logEventWithDataFileGroup(0, eventLogger, group);
+                      logEventWithDataFileGroup(
+                          MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, eventLogger, group);
 
                       // Remove the group from fresh file groups if the account is removed.
                       return transformSequentialAsync(
                           fileGroupsMetadata.remove(key),
                           removeSuccess -> {
                             if (!removeSuccess) {
-                              logEventWithDataFileGroup(0, eventLogger, group);
+                              logEventWithDataFileGroup(
+                                  MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, eventLogger, group);
                             }
                             return immediateVoidFuture();
                           });
@@ -2523,7 +2686,7 @@ public class FileGroupManager {
         fileGroupsMetadata.write(pendingGroupKey, pendingGroup),
         writeSuccess -> {
           if (!writeSuccess) {
-            eventLogger.logEventSampled(0);
+            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
             return immediateFailedFuture(new IOException("Unable to update file group metadata"));
           }
 
@@ -2543,8 +2706,8 @@ public class FileGroupManager {
     return transformSequential(
         fileGroupsMetadata.getAllFreshGroups(),
         pairs -> {
-          for (Pair<GroupKey, DataFileGroupInternal> pair : pairs) {
-            DataFileGroupInternal fileGroup = pair.second;
+          for (GroupKeyAndGroup pair : pairs) {
+            DataFileGroupInternal fileGroup = pair.dataFileGroup();
             for (DataFile dataFile : fileGroup.getFileList()) {
               NewFileKey newFileKey =
                   SharedFilesMetadata.createKeyFromDataFile(
@@ -2557,20 +2720,33 @@ public class FileGroupManager {
   }
 
   /** Logs download failure remotely via {@code eventLogger}. */
+  // incompatible argument for parameter code of logMddDownloadResult.
+  @SuppressWarnings("nullness:argument.type.incompatible")
   private ListenableFuture<Void> logDownloadFailure(
       GroupKey groupKey, DownloadException downloadException, long buildId, String variantId) {
-    Void groupDetails = null;
+    DataDownloadFileGroupStats.Builder groupDetails =
+        DataDownloadFileGroupStats.newBuilder()
+            .setFileGroupName(groupKey.getGroupName())
+            .setOwnerPackage(groupKey.getOwnerPackage())
+            .setBuildId(buildId)
+            .setVariantId(variantId);
 
     return transformSequentialAsync(
         fileGroupsMetadata.read(groupKey.toBuilder().setDownloaded(false).build()),
         dataFileGroup -> {
-          eventLogger.logMddDownloadResult(0, groupDetails);
+          if (dataFileGroup != null) {
+            groupDetails.setFileGroupVersionNumber(dataFileGroup.getFileGroupVersionNumber());
+          }
+
+          eventLogger.logMddDownloadResult(
+              MddDownloadResult.Code.forNumber(downloadException.getDownloadResultCode().getCode()),
+              groupDetails.build());
           return immediateVoidFuture();
         });
   }
 
   private ListenableFuture<Boolean> subscribeGroup(DataFileGroupInternal dataFileGroup) {
-    return subscribeGroup(dataFileGroup, /* index = */ 0, dataFileGroup.getFileCount());
+    return subscribeGroup(dataFileGroup, /* index= */ 0, dataFileGroup.getFileCount());
   }
 
   // Because the decision to continue iterating or not depends on the result of the asynchronous
@@ -2607,7 +2783,7 @@ public class FileGroupManager {
     }
   }
 
-  private ListenableFuture<Boolean> isAddedGroupDuplicate(
+  private ListenableFuture<Optional<Integer>> isAddedGroupDuplicate(
       GroupKey groupKey, DataFileGroupInternal dataFileGroup) {
     // Search for a non-downloaded version of this group.
     GroupKey pendingGroupKey = groupKey.toBuilder().setDownloaded(false).build();
@@ -2623,9 +2799,9 @@ public class FileGroupManager {
           return transformSequentialAsync(
               fileGroupsMetadata.read(downloadedGroupKey),
               downloadedGroup -> {
-                boolean result =
+                Optional<Integer> result =
                     (downloadedGroup == null)
-                        ? false
+                        ? Optional.of(0)
                         : areSameGroup(dataFileGroup, downloadedGroup);
                 return immediateFuture(result);
               });
@@ -2638,38 +2814,41 @@ public class FileGroupManager {
    *
    * @param newGroup The new config that we received for the client.
    * @param prevGroup The old config that we already have for the client.
-   * @return true if the new config contains an upgrade to any file.
+   * @return absent if the group is the same, otherwise a code for why the new config isn't the same
    */
-  private static boolean areSameGroup(
+  private static Optional<Integer> areSameGroup(
       DataFileGroupInternal newGroup, DataFileGroupInternal prevGroup) {
     // We do not compare the protos directly and check individual fields because proto.equals
     // also compares extensions (and unknown fields).
     // TODO: Consider clearing extensions and then comparing protos.
     if (prevGroup.getBuildId() != newGroup.getBuildId()) {
-      return false;
+      return Optional.of(0);
     }
     if (!prevGroup.getVariantId().equals(newGroup.getVariantId())) {
-      return false;
+      return Optional.of(0);
     }
     if (prevGroup.getFileGroupVersionNumber() != newGroup.getFileGroupVersionNumber()) {
-      return false;
+      return Optional.of(0);
     }
     if (!hasSameFiles(newGroup, prevGroup)) {
-      return false;
+      return Optional.of(0);
     }
     if (prevGroup.getStaleLifetimeSecs() != newGroup.getStaleLifetimeSecs()) {
-      return false;
+      return Optional.of(0);
     }
     if (prevGroup.getExpirationDateSecs() != newGroup.getExpirationDateSecs()) {
-      return false;
+      return Optional.of(0);
     }
     if (!prevGroup.getDownloadConditions().equals(newGroup.getDownloadConditions())) {
-      return false;
+      return Optional.of(0);
     }
     if (!prevGroup.getAllowedReadersEnum().equals(newGroup.getAllowedReadersEnum())) {
-      return false;
+      return Optional.of(0);
     }
-    return true;
+    if (!prevGroup.getExperimentInfo().equals(newGroup.getExperimentInfo())) {
+      return Optional.of(0);
+    }
+    return Optional.absent();
   }
 
   /**
@@ -2744,10 +2923,6 @@ public class FileGroupManager {
         groupKeyAndGroup -> {
           DataFileGroupInternal dataFileGroup = groupKeyAndGroup.dataFileGroup();
 
-          if (dataFileGroup == null) {
-            return immediateVoidFuture();
-          }
-
           for (DataFile dataFile : dataFileGroup.getFileList()) {
             NewFileKey newFileKey =
                 SharedFilesMetadata.createKeyFromDataFile(
@@ -2758,7 +2933,8 @@ public class FileGroupManager {
                     SharedFileMissingException.class,
                     e -> {
                       LogUtil.e("%s: Missing file. Logging and deleting file group.", TAG);
-                      logEventWithDataFileGroup(0, eventLogger, dataFileGroup);
+                      logEventWithDataFileGroup(
+                          MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, eventLogger, dataFileGroup);
 
                       if (flags.deleteFileGroupsWithFilesMissing()) {
                         return transformSequentialAsync(
@@ -2796,7 +2972,7 @@ public class FileGroupManager {
           }
 
           return transformSequentialAsync(
-              maybeVerifyIsolatedStructure(dataFileGroup, /*isDownloaded=*/ true),
+              maybeVerifyIsolatedStructure(dataFileGroup, /* isDownloaded= */ true),
               verified -> {
                 if (!verified) {
                   return PropagatedFluentFuture.from(createIsolatedFilePaths(dataFileGroup))
@@ -2818,19 +2994,6 @@ public class FileGroupManager {
         });
   }
 
-  @AutoValue
-  abstract static class GroupKeyAndGroup {
-    static GroupKeyAndGroup create(
-        GroupKey groupKey, @Nullable DataFileGroupInternal dataFileGroup) {
-      return new AutoValue_FileGroupManager_GroupKeyAndGroup(groupKey, dataFileGroup);
-    }
-
-    abstract GroupKey groupKey();
-
-    @Nullable
-    abstract DataFileGroupInternal dataFileGroup();
-  }
-
   private ListenableFuture<Void> iterateOverAllFileGroups(
       AsyncFunction<GroupKeyAndGroup, Void> processGroup) {
 
@@ -2844,7 +3007,9 @@ public class FileGroupManager {
                 transformSequentialAsync(
                     fileGroupsMetadata.read(groupKey),
                     dataFileGroup ->
-                        processGroup.apply(GroupKeyAndGroup.create(groupKey, dataFileGroup))));
+                        (dataFileGroup != null)
+                            ? processGroup.apply(GroupKeyAndGroup.create(groupKey, dataFileGroup))
+                            : immediateVoidFuture()));
           }
           return PropagatedFutures.whenAllComplete(allGroupsProcessed)
               .call(() -> null, sequentialControlExecutor);
@@ -2859,22 +3024,21 @@ public class FileGroupManager {
         transformSequentialAsync(
             fileGroupsMetadata.getAllFreshGroups(),
             dataFileGroups -> {
-              ArrayList<Pair<GroupKey, DataFileGroupInternal>> sortedFileGroups =
-                  new ArrayList<>(dataFileGroups);
+              ArrayList<GroupKeyAndGroup> sortedFileGroups = new ArrayList<>(dataFileGroups);
               Collections.sort(
                   sortedFileGroups,
                   (pairA, pairB) ->
                       ComparisonChain.start()
-                          .compare(pairA.first.getGroupName(), pairB.first.getGroupName())
-                          .compare(pairA.first.getAccount(), pairB.first.getAccount())
+                          .compare(pairA.groupKey().getGroupName(), pairB.groupKey().getGroupName())
+                          .compare(pairA.groupKey().getAccount(), pairB.groupKey().getAccount())
                           .result());
-              for (Pair<GroupKey, DataFileGroupInternal> dataFileGroupPair : sortedFileGroups) {
+              for (GroupKeyAndGroup dataFileGroupPair : sortedFileGroups) {
                 // TODO(b/131166925): MDD dump should not use lite proto toString.
                 writer.format(
                     "GroupName: %s\nAccount: %s\nDataFileGroup:\n %s\n\n",
-                    dataFileGroupPair.first.getGroupName(),
-                    dataFileGroupPair.first.getAccount(),
-                    dataFileGroupPair.second.toString());
+                    dataFileGroupPair.groupKey().getGroupName(),
+                    dataFileGroupPair.groupKey().getAccount(),
+                    dataFileGroupPair.dataFileGroup().toString());
               }
               return immediateVoidFuture();
             });
@@ -2923,7 +3087,7 @@ public class FileGroupManager {
   }
 
   private static void logEventWithDataFileGroup(
-      int code, EventLogger eventLogger, DataFileGroupInternal fileGroup) {
+      MddClientEvent.Code code, EventLogger eventLogger, DataFileGroupInternal fileGroup) {
     eventLogger.logEventSampled(
         code,
         fileGroup.getGroupName(),

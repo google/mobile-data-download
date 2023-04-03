@@ -20,6 +20,7 @@ import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopul
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_ID;
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_SIZE;
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_URL;
+import static com.google.android.libraries.mobiledatadownload.testing.MddTestDependencies.ExecutorType;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.fail;
@@ -28,7 +29,6 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.Environment;
 import androidx.test.core.app.ApplicationProvider;
-import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.downloader.DownloadRequest;
 import com.google.android.libraries.mobiledatadownload.downloader.FileDownloader;
@@ -62,8 +62,11 @@ import com.google.mobiledatadownload.ClientConfigProto.ClientFile;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup.Status;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFile;
+import com.google.mobiledatadownload.DownloadConfigProto.DataFile.ChecksumType;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.protobuf.ByteString;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.ExecutionException;
@@ -79,7 +82,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-@RunWith(AndroidJUnit4.class)
+@RunWith(TestParameterInjector.class)
 public final class ImportFilesIntegrationTest {
 
   @Rule public final MockitoRule mocks = MockitoJUnit.rule();
@@ -88,18 +91,18 @@ public final class ImportFilesIntegrationTest {
 
   private static final String TEST_DATA_ABSOLUTE_PATH =
       Environment.getExternalStorageDirectory()
-          + "/googletest/test_runfiles/google3/third_party/java_src/android_libs/mobiledatadownload/javatests/com/google/android/libraries/mobiledatadownload/testdata/";
+          + "/googletest/test_runfiles/third_party/java_src/android_libs/mobiledatadownload/javatests/com/google/android/libraries/mobiledatadownload/testdata/";
 
-  // Note: Control Executor must not be a single thread executor.
-  private static final ListeningExecutorService CONTROL_EXECUTOR =
-      MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
   private static final ScheduledExecutorService DOWNLOAD_EXECUTOR =
       Executors.newScheduledThreadPool(2);
 
   private static final String FILE_ID_1 = "test-file-1";
   private static final Uri FILE_URI_1 =
       Uri.parse(
-          FileUri.builder().setPath(TEST_DATA_ABSOLUTE_PATH + "odws1_empty").build().toString());
+          FileUri.builder()
+              .setPath(TEST_DATA_ABSOLUTE_PATH + "odws1_empty.jar")
+              .build()
+              .toString());
   private static final String FILE_CHECKSUM_1 = "a1cba9d87b1440f41ce9e7da38c43e1f6bd7d5df";
   private static final String FILE_URL_1 = "inlinefile:sha1:" + FILE_CHECKSUM_1;
   private static final int FILE_SIZE_1 = 554;
@@ -129,7 +132,21 @@ public final class ImportFilesIntegrationTest {
           .setChecksum(FILE_CHECKSUM_2)
           .build();
 
+  private static final long BUILD_ID = 10;
+  private static final String VARIANT_ID = "default";
+  private static final String FILE_ID_3 = "empty-inline-file";
+  private static final String FILE_URL_3 =
+      String.format("inlinefile:buildId:%s:variantId:%s", BUILD_ID, VARIANT_ID);
+  private static final DataFile EMPTY_INLINE_FILE =
+      DataFile.newBuilder()
+          .setFileId(FILE_ID_3)
+          .setChecksumType(ChecksumType.NONE)
+          .setUrlToDownload(FILE_URL_3)
+          .build();
+
   private static final Context context = ApplicationProvider.getApplicationContext();
+
+  private final TestFlags flags = new TestFlags();
 
   @Mock private TaskScheduler mockTaskScheduler;
   @Mock private NetworkUsageMonitor mockNetworkUsageMonitor;
@@ -137,13 +154,15 @@ public final class ImportFilesIntegrationTest {
 
   private FakeFileBackend fakeFileBackend;
   private SynchronousFileStorage fileStorage;
+
   private Supplier<FileDownloader> multiSchemeFileDownloaderSupplier;
   private MobileDataDownload mobileDataDownload;
+  private ListeningExecutorService controlExecutor;
 
   private FileSource inlineFileSource1;
   private FileSource inlineFileSource2;
 
-  private final TestFlags flags = new TestFlags();
+  @TestParameter ExecutorType controlExecutorType;
 
   @Before
   public void setUp() throws Exception {
@@ -155,37 +174,42 @@ public final class ImportFilesIntegrationTest {
             /* transforms= */ ImmutableList.of(new CompressTransform()),
             /* monitors= */ ImmutableList.of(mockNetworkUsageMonitor, mockDownloadProgressMonitor));
 
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            BaseFileDownloaderModule.createOffroad2FileDownloader(
-                context,
-                DOWNLOAD_EXECUTOR,
-                CONTROL_EXECUTOR,
-                fileStorage,
-                new SharedPreferencesDownloadMetadata(
-                    context.getSharedPreferences("downloadmetadata", 0), CONTROL_EXECUTOR),
-                Optional.of(mockDownloadProgressMonitor),
-                /* urlEngineOptional= */ Optional.absent(),
-                /* exceptionHandlerOptional= */ Optional.absent(),
-                /* authTokenProviderOptional= */ Optional.absent(),
-                /* trafficTag= */ Optional.absent(),
-                flags);
-
-    Supplier<FileDownloader> inlineFileDownloaderSupplier =
-        () -> new InlineFileDownloader(fileStorage, DOWNLOAD_EXECUTOR);
-    multiSchemeFileDownloaderSupplier =
-        () ->
-            MultiSchemeFileDownloader.builder()
-                .addScheme("https", fileDownloaderSupplier.get())
-                .addScheme("inlinefile", inlineFileDownloaderSupplier.get())
-                .build();
-
     // Set up inline file sources
     try (InputStream fileStream1 = fileStorage.open(FILE_URI_1, ReadStreamOpener.create());
         InputStream fileStream2 = fileStorage.open(FILE_URI_2, ReadStreamOpener.create())) {
       inlineFileSource1 = FileSource.ofByteString(ByteString.readFrom(fileStream1));
       inlineFileSource2 = FileSource.ofByteString(ByteString.readFrom(fileStream2));
     }
+
+    controlExecutor = controlExecutorType.executor();
+
+    Supplier<FileDownloader> httpsFileDownloaderSupplier =
+        () ->
+            BaseFileDownloaderModule.createOffroad2FileDownloader(
+                context,
+                DOWNLOAD_EXECUTOR,
+                controlExecutor,
+                fileStorage,
+                new SharedPreferencesDownloadMetadata(
+                    context.getSharedPreferences("downloadmetadata", 0), controlExecutor),
+                Optional.of(mockDownloadProgressMonitor),
+                /* urlEngineOptional= */ Optional.absent(),
+                /* exceptionHandlerOptional= */ Optional.absent(),
+                /* authTokenProviderOptional= */ Optional.absent(),
+                /* cookieJarSupplierOptional= */ Optional.absent(),
+                /* trafficTag= */ Optional.absent(),
+                flags);
+
+    Supplier<FileDownloader> inlineFileDownloaderSupplier =
+        () -> new InlineFileDownloader(fileStorage, DOWNLOAD_EXECUTOR);
+
+    multiSchemeFileDownloaderSupplier =
+        () ->
+            MultiSchemeFileDownloader.builder()
+                .addScheme("https", httpsFileDownloaderSupplier.get())
+                .addScheme("inlinefile", inlineFileDownloaderSupplier.get())
+                .build();
+    flags.enableDownloadStageExperimentIdPropagation = Optional.of(true);
   }
 
   @After
@@ -198,7 +222,7 @@ public final class ImportFilesIntegrationTest {
 
   @Test
   public void importFiles_performsImport() throws Exception {
-    createMobileDataDownload(multiSchemeFileDownloaderSupplier);
+    mobileDataDownload = builderForTest().build();
 
     DataFileGroup fileGroupWithInlineFile =
         DataFileGroup.newBuilder()
@@ -244,7 +268,7 @@ public final class ImportFilesIntegrationTest {
 
   @Test
   public void importFiles_whenImportingMultipleFiles_performsImport() throws Exception {
-    createMobileDataDownload(multiSchemeFileDownloaderSupplier);
+    mobileDataDownload = builderForTest().build();
 
     DataFileGroup fileGroupWithInlineFile =
         DataFileGroup.newBuilder()
@@ -306,7 +330,8 @@ public final class ImportFilesIntegrationTest {
                 return multiSchemeFileDownloaderSupplier.get().startDownloading(request);
               }
             });
-    createMobileDataDownload(() -> blockingFileDownloader);
+    mobileDataDownload =
+        builderForTest().setFileDownloaderSupplier(() -> blockingFileDownloader).build();
 
     DataFileGroup fileGroup1WithInlineFile =
         DataFileGroup.newBuilder()
@@ -365,7 +390,9 @@ public final class ImportFilesIntegrationTest {
     blockingFileDownloader.finishDownloading();
 
     // Wait for both futures to complete
-    Futures.whenAllSucceed(importFuture1, importFuture2).call(() -> null, CONTROL_EXECUTOR).get();
+    Futures.whenAllSucceed(importFuture1, importFuture2)
+        .call(() -> null, MoreExecutors.directExecutor())
+        .get();
 
     // Assert that the resulting group is downloaded and contains a reference to on device file
     ClientFileGroup importResult1 =
@@ -397,7 +424,7 @@ public final class ImportFilesIntegrationTest {
 
   @Test
   public void importFiles_whenNewInlineFileSpecified_importsAndStoresFile() throws Exception {
-    createMobileDataDownload(multiSchemeFileDownloaderSupplier);
+    mobileDataDownload = builderForTest().build();
 
     DataFileGroup fileGroupWithOneInlineFile =
         DataFileGroup.newBuilder()
@@ -448,7 +475,7 @@ public final class ImportFilesIntegrationTest {
   @Test
   public void importFiles_whenNewInlineFileAddedToPendingGroup_importsAndStoresFile()
       throws Exception {
-    createMobileDataDownload(multiSchemeFileDownloaderSupplier);
+    mobileDataDownload = builderForTest().build();
 
     DataFileGroup fileGroupWithStandardFile =
         DataFileGroup.newBuilder()
@@ -522,7 +549,7 @@ public final class ImportFilesIntegrationTest {
 
   @Test
   public void importFiles_toNonExistentDataFileGroup_fails() throws Exception {
-    createMobileDataDownload(multiSchemeFileDownloaderSupplier);
+    mobileDataDownload = builderForTest().build();
 
     FileSource inlineFileSource = FileSource.ofByteString(ByteString.copyFromUtf8("TEST_CONTENT"));
 
@@ -547,7 +574,7 @@ public final class ImportFilesIntegrationTest {
 
   @Test
   public void importFiles_whenMismatchedVersion_failToImport() throws Exception {
-    createMobileDataDownload(multiSchemeFileDownloaderSupplier);
+    mobileDataDownload = builderForTest().build();
 
     DataFileGroup fileGroupWithInlineFile =
         DataFileGroup.newBuilder()
@@ -586,7 +613,7 @@ public final class ImportFilesIntegrationTest {
 
   @Test
   public void importFiles_whenImportFails_doesNotWriteUpdatedMetadata() throws Exception {
-    createMobileDataDownload(multiSchemeFileDownloaderSupplier);
+    mobileDataDownload = builderForTest().build();
 
     // Create initial file group to import
     DataFileGroup initialFileGroup =
@@ -681,7 +708,8 @@ public final class ImportFilesIntegrationTest {
               }
             });
 
-    createMobileDataDownload(() -> blockingFileDownloader);
+    mobileDataDownload =
+        builderForTest().setFileDownloaderSupplier(() -> blockingFileDownloader).build();
 
     DataFileGroup fileGroup1WithInlineFile =
         DataFileGroup.newBuilder()
@@ -783,7 +811,8 @@ public final class ImportFilesIntegrationTest {
               }
             });
 
-    createMobileDataDownload(() -> blockingFileDownloader);
+    mobileDataDownload =
+        builderForTest().setFileDownloaderSupplier(() -> blockingFileDownloader).build();
 
     DataFileGroup fileGroupWithInlineFile =
         DataFileGroup.newBuilder()
@@ -816,7 +845,7 @@ public final class ImportFilesIntegrationTest {
     // wait for the file downloader to be invoked before performing the cancel.
     blockingFileDownloader.waitForDownloadStarted();
 
-    importFilesFuture.cancel(/* mayInterruptIfRunning = */ true);
+    importFilesFuture.cancel(/* mayInterruptIfRunning= */ true);
 
     // Allow the download to continue and trigger our delegate FileDownloader. If the future isn't
     // cancelled, the onSuccess callback should fail the test.
@@ -828,18 +857,101 @@ public final class ImportFilesIntegrationTest {
     mobileDataDownload.clear().get();
   }
 
-  private void createMobileDataDownload(Supplier<FileDownloader> fileDownloaderSupplier) {
-    mobileDataDownload =
-        MobileDataDownloadBuilder.newBuilder()
-            .setContext(context)
-            .setControlExecutor(CONTROL_EXECUTOR)
-            .setFileDownloaderSupplier(fileDownloaderSupplier)
-            .setTaskScheduler(Optional.of(mockTaskScheduler))
-            .setDeltaDecoderOptional(Optional.absent())
-            .setFileStorage(fileStorage)
-            .setNetworkUsageMonitor(mockNetworkUsageMonitor)
-            .setDownloadMonitorOptional(Optional.of(mockDownloadProgressMonitor))
-            .setFlagsOptional(Optional.of(flags))
+  @Test
+  public void importFiles_emptyInlineFileImport_withExperimentInfo() throws Exception {
+    mobileDataDownload = builderForTest().build();
+
+    DataFileGroup fileGroupWithInlineFile =
+        DataFileGroup.newBuilder()
+            .setBuildId(BUILD_ID)
+            .setStaleLifetimeSecs(0)
+            .setVariantId(VARIANT_ID)
+            .setGroupName(FILE_GROUP_NAME)
+            .addFile(EMPTY_INLINE_FILE)
             .build();
+
+    // Ensure that we add the file group successfully.
+    assertThat(
+            mobileDataDownload
+                .addFileGroup(
+                    AddFileGroupRequest.newBuilder()
+                        .setDataFileGroup(fileGroupWithInlineFile)
+                        .build())
+                .get())
+        .isTrue();
+
+    // Use getFileGroupsByFilter to get the file group.
+    ImmutableList<ClientFileGroup> allFileGroups =
+        mobileDataDownload
+            .getFileGroupsByFilter(
+                GetFileGroupsByFilterRequest.newBuilder()
+                    .setGroupNameOptional(Optional.of(FILE_GROUP_NAME))
+                    .build())
+            .get();
+
+    // Assert that the resulting group is pending.
+    assertThat(allFileGroups.get(0).getStatus()).isEqualTo(Status.PENDING);
+
+    // Perform the import.
+    mobileDataDownload
+        .importFiles(
+            ImportFilesRequest.newBuilder()
+                .setGroupName(FILE_GROUP_NAME)
+                .setBuildId(BUILD_ID)
+                .setVariantId(VARIANT_ID)
+                .setInlineFileMap(
+                    ImmutableMap.of(FILE_ID_3, FileSource.ofByteString(ByteString.EMPTY)))
+                .build())
+        .get();
+
+    // Assert that the resulting group is downloaded and contains a reference to on device file.
+    ClientFileGroup importResult =
+        mobileDataDownload
+            .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
+            .get();
+    Uri importFileUri = Uri.parse(importResult.getFile(0).getFileUri());
+
+    // Verify if correct DOWNLOADED stage experiment Ids are attached.
+    assertThat(importResult).isNotNull();
+    assertThat(importResult.getGroupName()).isEqualTo(FILE_GROUP_NAME);
+    assertThat(importResult.getFileCount()).isEqualTo(1);
+    assertThat(importResult.getStatus()).isEqualTo(Status.DOWNLOADED);
+    assertThat(fileStorage.exists(importFileUri)).isTrue();
+
+    // Remove the filegroup which has been downloaded.
+    mobileDataDownload
+        .removeFileGroup(RemoveFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
+        .get();
+
+    importResult =
+        mobileDataDownload
+            .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
+            .get();
+
+    // Assert no active filegroup.
+    assertThat(importResult).isNull();
+
+    // Run MDD maintenance task.
+    mobileDataDownload.handleTask(TaskScheduler.MAINTENANCE_PERIODIC_TASK).get();
+
+    // Assert file removed from file storage.
+    assertThat(fileStorage.exists(importFileUri)).isFalse();
+  }
+
+  /**
+   * Returns MDD Builder with common dependencies set -- additional dependencies are added in each
+   * test as needed.
+   */
+  private MobileDataDownloadBuilder builderForTest() {
+    return MobileDataDownloadBuilder.newBuilder()
+        .setContext(context)
+        .setControlExecutor(controlExecutor)
+        .setFileDownloaderSupplier(multiSchemeFileDownloaderSupplier)
+        .setTaskScheduler(Optional.of(mockTaskScheduler))
+        .setDeltaDecoderOptional(Optional.absent())
+        .setFileStorage(fileStorage)
+        .setNetworkUsageMonitor(mockNetworkUsageMonitor)
+        .setDownloadMonitorOptional(Optional.of(mockDownloadProgressMonitor))
+        .setFlagsOptional(Optional.of(flags));
   }
 }

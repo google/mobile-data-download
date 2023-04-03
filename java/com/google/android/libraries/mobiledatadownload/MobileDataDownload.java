@@ -18,10 +18,12 @@ package com.google.android.libraries.mobiledatadownload;
 import com.google.android.libraries.mobiledatadownload.TaskScheduler.ConstraintOverrides;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.CheckReturnValue;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
+import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import java.util.Map;
 
 /** The root object and entry point for the MobileDataDownload library. */
@@ -80,6 +82,18 @@ public interface MobileDataDownload {
       RemoveFileGroupsByFilterRequest removeFileGroupsByFilterRequest);
 
   /**
+   * Gets the file group definition that was added to MDD. This API cannot be used to access files,
+   * but it can be accessed by populators to manipulate the existing file group state - eg, to
+   * rename a file group, or otherwise migrate from one format to another.
+   *
+   * @return DataFileGroup if downloaded file group is found, otherwise a failing LF.
+   */
+  default ListenableFuture<DataFileGroup> readDataFileGroup(
+      ReadDataFileGroupRequest readDataFileGroupRequest) {
+    throw new UnsupportedOperationException();
+  }
+
+  /**
    * Returns the latest downloaded data that we have for the given group name.
    *
    * <p>This api takes an instance of {@link GetFileGroupRequest} that contains group name, and it
@@ -87,6 +101,10 @@ public interface MobileDataDownload {
    *
    * <p>This listenable future will return null if no group exists or has been downloaded for the
    * given group name.
+   *
+   * <p>Note: getFileGroup returns a snapshot of the latest state, but it's possible for the state
+   * to change between a getFileGroup call and accessing the files if the ClientFileGroup gets
+   * cached. Caching the returned ClientFileGroup is therefore discouraged.
    *
    * @param getFileGroupRequest The request to get a single file group.
    * @return The ListenableFuture of requested client file group for the given request.
@@ -101,6 +119,10 @@ public interface MobileDataDownload {
    * <p>Only present fields in {@link GetFileGroupsByFilterRequest} will be used to perform the
    * filtering, i.e. when no account is specified in the filter, file groups won't be filtered based
    * on account.
+   *
+   * <p>Note: getFileGroupsByFilter returns a snapshot of the latest state, but it's possible for
+   * the state to change between a getFileGroupsByFilter call and accessing the files if the
+   * ClientFileGroup gets cached. Caching the returned ClientFileGroup is therefore discouraged.
    *
    * @param getFileGroupsByFilterRequest The request to get multiple file groups after filtering.
    * @return The ListenableFuture that will resolve to a list of the requested client file groups,
@@ -227,8 +249,6 @@ public interface MobileDataDownload {
    *
    * @param downloadFileGroupRequest The request to download file group.
    */
-  // TODO: Handle the case where a client calls this API for the same group when the
-  //  earlier call has not finished.
   ListenableFuture<ClientFileGroup> downloadFileGroup(
       DownloadFileGroupRequest downloadFileGroupRequest);
 
@@ -302,13 +322,15 @@ public interface MobileDataDownload {
    * <p>Attempts to cancel an on-going foreground download using best effort. If download is unknown
    * to MDD, this operation is a noop.
    *
-   * <p>If the download was started with {@link
-   * #downloadFileGroupWithForegroundService(DownloadFileGroupRequest)}, the specific {@code
-   * downloadKey} must be the group name of the file group.
+   * <p>The key passed here must be created using {@link ForegroundDownloadKey}, and must match the
+   * properties used from the request. Depending on which API was used to start the download, this
+   * would be {@link DownloadFileGroupRequest} for {@link SingleFileDownloadRequest}.
    *
-   * <p>If the download was started with {@link
-   * #downloadFileWithForegroundService(SingleFileDownloadRequest)}, the specific {@code
-   * downloadKey} must be the destination file uri (in string form).
+   * <p><b>NOTE:</b> In most cases, clients will not need to call this -- it is meant to allow the
+   * ForegroundDownloadService to cancel a download via the Cancel action registered to a
+   * notification.
+   *
+   * <p>Clients should prefer to cancel the future returned to them from the download call.
    *
    * @param downloadKey the key associated with the download
    */
@@ -326,6 +348,16 @@ public interface MobileDataDownload {
    * <p>The returned ListenableFuture would fail if the maintenance execution doesn't succeed.
    */
   ListenableFuture<Void> maintenance();
+
+  /**
+   * Perform garbage collection, which includes removing expired file groups and unreferenced files.
+   *
+   * <p>By default, this is run as part of {@link #maintenance} so doesn't need to be invoked
+   * directly by client code. If you disabled that behavior via {@link
+   * Flags#mddEnableGarbageCollection} then this method should be periodically called to clean up
+   * unused files.
+   */
+  ListenableFuture<Void> collectGarbage();
 
   /**
    * Schedule periodic tasks that will download and verify all file groups when the required
@@ -374,6 +406,18 @@ public interface MobileDataDownload {
    */
   ListenableFuture<Void> schedulePeriodicBackgroundTasks(
       Optional<Map<String, ConstraintOverrides>> constraintOverridesMap);
+
+  /**
+   * Cancels previously-scheduled periodic background tasks using the given {@link TaskScheduler}.
+   * Cancelling is best-effort and only meant to be used in an emergency; most apps will never need
+   * to call it.
+   *
+   * <p>If the host app doesn't provide a TaskScheduler, calling this API is a no-op.
+   */
+  default ListenableFuture<Void> cancelPeriodicBackgroundTasks() {
+    // TODO(b/223822302): remove default once all implementations have been updated to include it
+    return Futures.immediateVoidFuture();
+  }
 
   /**
    * Handle a task scheduled via a task scheduling service.

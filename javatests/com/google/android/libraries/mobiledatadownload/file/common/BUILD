@@ -11,9 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+load("//java/com/google/android/libraries/mobiledatadownload/file/common/testing:build_defs.bzl", "android_test_multi_api")
 load("@build_bazel_rules_android//android:rules.bzl", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -38,12 +40,21 @@ android_local_test(
     ],
 )
 
-android_local_test(
+android_test_multi_api(
     name = "LockScopeTest",
     size = "small",
+    timeout = "moderate",
     srcs = ["LockScopeTest.java"],
+    manifest = "LockScopeTestManifest.xml",
     deps = [
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file_adapter",
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@junit",
         "@truth",
     ],
 )

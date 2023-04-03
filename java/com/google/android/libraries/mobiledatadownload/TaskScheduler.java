@@ -148,4 +148,14 @@ public interface TaskScheduler {
     // update all clients.
     schedulePeriodicTask(tag, period, networkState);
   }
+
+  /**
+   * Cancel future invocations of a previously-scheduled task. No guarantee is made whether the task
+   * will be interrupted if it's currently running.
+   *
+   * @param tag tag of the scheduled task.
+   */
+  default void cancelPeriodicTask(String tag) {
+    // TODO(b/223822302): remove default once all implementations have been updated to include it
+  }
 }

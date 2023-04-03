@@ -112,7 +112,7 @@ public final class SamplesTest {
     String text = "SOME ALL CAPS TEXT";
     createFile(storage, uri, text);
     try (InputStream in = storage.open(uri, ReadStreamOpener.create())) {
-      assertThat(in instanceof Sizable).isTrue();
+      assertThat(in).isInstanceOf(Sizable.class);
       assertThat(((Sizable) in).size()).isEqualTo(text.length());
     }
   }

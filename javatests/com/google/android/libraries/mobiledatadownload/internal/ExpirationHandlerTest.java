@@ -26,13 +26,21 @@ import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.net.Uri;
-import android.util.Pair;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupBookkeeping;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
+import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
+import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
+import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
+import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.delta.DeltaDecoder;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
 import com.google.android.libraries.mobiledatadownload.internal.Migrations.FileKeyVersion;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.android.libraries.mobiledatadownload.internal.downloader.MddFileDownloader;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
@@ -43,14 +51,7 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupBookkeeping;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
-import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
-import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
-import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -161,6 +162,7 @@ public final class ExpirationHandlerTest {
           "android://com.google.android.libraries.mobiledatadownload.internal/files/datadownload/shared/links/public/test-group-2/test-group-2_0");
 
   private final TestFlags flags = new TestFlags();
+
   @Rule public final MockitoRule mocks = MockitoJUnit.rule();
 
   @Before
@@ -281,6 +283,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).children(baseDownloadDirectoryUri);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -288,8 +291,8 @@ public final class ExpirationHandlerTest {
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP_1, 2);
     NewFileKey[] fileKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(dataFileGroup);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKeys[0]))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));
@@ -321,6 +324,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirFor1p);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -335,8 +339,8 @@ public final class ExpirationHandlerTest {
 
     NewFileKey[] fileKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(dataFileGroup);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKeys[0]))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));
@@ -368,6 +372,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirFor1p);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -384,8 +389,8 @@ public final class ExpirationHandlerTest {
 
     NewFileKey[] fileKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(dataFileGroup);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(groups))
         .thenReturn(Futures.immediateFuture(new ArrayList<>()));
@@ -437,6 +442,17 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).deleteFile(testUri3);
     verify(mockBackend).deleteFile(testUri4);
     verifyNoMoreInteractions(mockSharedFileManager);
+
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 4);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 5);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -451,8 +467,8 @@ public final class ExpirationHandlerTest {
 
     NewFileKey[] fileKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(dataFileGroup);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKeys[0]))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));
@@ -484,6 +500,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirFor1p);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -499,8 +516,8 @@ public final class ExpirationHandlerTest {
 
     NewFileKey[] fileKeys = createFileKeysUseChecksumOnly(dataFileGroup);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKeys[0]))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));
@@ -534,6 +551,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirFor0p);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -552,8 +570,8 @@ public final class ExpirationHandlerTest {
 
     NewFileKey[] fileKeys = createFileKeysUseChecksumOnly(dataFileGroup);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(groups))
         .thenReturn(Futures.immediateFuture(new ArrayList<>()));
@@ -583,6 +601,17 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).deleteFile(testUri2);
     verify(mockBackend).deleteFile(tempTestUri2);
     verifyNoMoreInteractions(mockSharedFileManager);
+
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 2);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 1);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -614,8 +643,10 @@ public final class ExpirationHandlerTest {
             .setAllowedReadersEnum(AllowedReaders.ONLY_GOOGLE_PLAY_SERVICES)
             .build();
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, firstGroup), Pair.create(TEST_KEY_2, secondGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(
+            GroupKeyAndGroup.create(TEST_KEY_1, firstGroup),
+            GroupKeyAndGroup.create(TEST_KEY_2, secondGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKey))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));
@@ -640,6 +671,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirForAll);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -673,8 +705,10 @@ public final class ExpirationHandlerTest {
             .setExpirationDateSecs(sooner.getTimeInMillis() / 1000)
             .build();
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, firstGroup), Pair.create(TEST_KEY_2, secondGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(
+            GroupKeyAndGroup.create(TEST_KEY_1, firstGroup),
+            GroupKeyAndGroup.create(TEST_KEY_2, secondGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKey))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));
@@ -699,6 +733,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirForAll);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -747,6 +782,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirFor1p);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -796,6 +832,7 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(dirFor1p);
     verify(mockBackend, never()).deleteFile(any());
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -847,6 +884,16 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(testUri2);
     verify(mockBackend).deleteFile(testUri1);
     verify(mockBackend).deleteFile(testUri2);
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 2);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 2);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -900,6 +947,16 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).isDirectory(testUri2);
     verify(mockBackend).deleteFile(testUri1);
     verify(mockBackend).deleteFile(testUri2);
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 2);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 2);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -955,6 +1012,16 @@ public final class ExpirationHandlerTest {
     verify(mockBackend).deleteFile(testDirFileUri1);
     verify(mockBackend).deleteFile(testDirFileUri2);
     verify(mockBackend).deleteFile(testUri2);
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 3);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 2);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -993,8 +1060,7 @@ public final class ExpirationHandlerTest {
             .setStaleLifetimeSecs((sooner.getTimeInMillis() - now.getTimeInMillis()) / 1000)
             .build();
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, activeGroup));
+    List<GroupKeyAndGroup> groups = Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, activeGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
 
     fileGroupsMetadataStaleGroups.set(ImmutableList.of(staleGroup));
@@ -1019,6 +1085,7 @@ public final class ExpirationHandlerTest {
     verify(mockSharedFilesMetadata).getAllFileKeys();
     verify(mockSharedFileManager).getOnDeviceUri(fileKey);
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
     verify(mockBackend).exists(baseDownloadDirectoryUri);
     verify(mockBackend).children(baseDownloadDirectoryUri);
     verify(mockBackend).isDirectory(dirForAll);
@@ -1059,8 +1126,7 @@ public final class ExpirationHandlerTest {
             .setStaleLifetimeSecs(laterTimeSecs - now.getTimeInMillis() / 1000)
             .build();
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, activeGroup));
+    List<GroupKeyAndGroup> groups = Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, activeGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
 
     fileGroupsMetadataStaleGroups.set(ImmutableList.of(staleGroup));
@@ -1084,6 +1150,7 @@ public final class ExpirationHandlerTest {
     verify(mockSharedFilesMetadata).getAllFileKeys();
     verify(mockSharedFileManager).getOnDeviceUri(fileKey);
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
     verify(mockBackend).exists(baseDownloadDirectoryUri);
     verify(mockBackend).children(baseDownloadDirectoryUri);
     verify(mockBackend).isDirectory(dirForAll);
@@ -1122,8 +1189,7 @@ public final class ExpirationHandlerTest {
             .setStaleLifetimeSecs((sooner.getTimeInMillis() - now.getTimeInMillis()) / 1000)
             .build();
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, activeGroup));
+    List<GroupKeyAndGroup> groups = Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, activeGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
 
     fileGroupsMetadataStaleGroups.set(ImmutableList.of(staleGroup));
@@ -1147,6 +1213,7 @@ public final class ExpirationHandlerTest {
     verify(mockSharedFilesMetadata).getAllFileKeys();
     verify(mockSharedFileManager).getOnDeviceUri(fileKey);
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
     verify(mockBackend).exists(baseDownloadDirectoryUri);
     verify(mockBackend).children(baseDownloadDirectoryUri);
     verify(mockBackend).isDirectory(dirForAll);
@@ -1187,8 +1254,7 @@ public final class ExpirationHandlerTest {
             .setStaleLifetimeSecs(laterTimeSecs - now.getTimeInMillis() / 1000)
             .build();
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, activeGroup));
+    List<GroupKeyAndGroup> groups = Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, activeGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
 
     fileGroupsMetadataStaleGroups.set(ImmutableList.of(staleGroup));
@@ -1212,6 +1278,14 @@ public final class ExpirationHandlerTest {
     verify(mockSharedFilesMetadata).getAllFileKeys();
     verify(mockSharedFileManager).getOnDeviceUri(fileKey);
     verifyNoMoreInteractions(mockSharedFileManager);
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            activeGroup.getGroupName(),
+            activeGroup.getFileGroupVersionNumber(),
+            activeGroup.getBuildId(),
+            activeGroup.getVariantId());
+    verifyNoMoreInteractions(mockEventLogger);
     verify(mockBackend).exists(baseDownloadDirectoryUri);
     verify(mockBackend).children(baseDownloadDirectoryUri);
     verify(mockBackend).isDirectory(dirForAll);
@@ -1249,8 +1323,7 @@ public final class ExpirationHandlerTest {
             .setExpirationDateSecs(earliestSecs)
             .build();
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, firstGroup));
+    List<GroupKeyAndGroup> groups = Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, firstGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(groups))
         .thenReturn(Futures.immediateFuture(ImmutableList.of()));
@@ -1307,8 +1380,8 @@ public final class ExpirationHandlerTest {
             .setAllowedReadersEnum(AllowedReaders.ONLY_GOOGLE_PLAY_SERVICES)
             .setExpirationDateSecs(firstExpirationSecs);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, firstGroup.build()));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, firstGroup.build()));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
 
     when(mockSharedFileManager.getFileStatus(fileKey))
@@ -1384,7 +1457,7 @@ public final class ExpirationHandlerTest {
             .setExpirationDateSecs(secondExpirationSecs)
             .build();
 
-    groups = Arrays.asList(Pair.create(TEST_KEY_2, secondGroup));
+    groups = Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_2, secondGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
 
     expirationHandler.updateExpiration().get();
@@ -1418,6 +1491,7 @@ public final class ExpirationHandlerTest {
     verify(mockSharedFileManager, times(4)).getOnDeviceUri(fileKey);
     verify(mockSharedFilesMetadata, times(4)).getAllFileKeys();
     verifyNoMoreInteractions(mockSharedFileManager);
+    verifyNoMoreInteractions(mockEventLogger);
     verify(mockBackend, times(4)).exists(baseDownloadDirectoryUri);
     verify(mockBackend, times(4)).children(baseDownloadDirectoryUri);
     verify(mockBackend, times(4)).isDirectory(dirForAll);
@@ -1454,6 +1528,17 @@ public final class ExpirationHandlerTest {
     verify(mockBlobStoreBackend).deleteFile(blobUri);
     assertThat(sharedFilesMetadata.read(fileKeys[0]).get()).isNull();
     assertThat(fileGroupsMetadata.read(TEST_KEY_1).get()).isNull();
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 1);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 1);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -1489,6 +1574,16 @@ public final class ExpirationHandlerTest {
     verify(mockBlobStoreBackend).deleteFile(blobUri);
     assertThat(sharedFilesMetadata.read(fileKeys[0]).get()).isNull();
     assertThat(fileGroupsMetadata.read(TEST_KEY_1).get()).isNull();
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 1);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -1524,6 +1619,19 @@ public final class ExpirationHandlerTest {
     assertThat(sharedFilesMetadata.read(fileKeys[0]).get()).isNull();
     assertThat(sharedFilesMetadata.read(fileKeys[1]).get()).isNull();
     assertThat(fileGroupsMetadata.read(TEST_KEY_1).get()).isNull();
+
+    verify(mockEventLogger)
+        .logEventSampled(
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            dataFileGroup.getGroupName(),
+            dataFileGroup.getFileGroupVersionNumber(),
+            dataFileGroup.getBuildId(),
+            dataFileGroup.getVariantId());
+    verify(mockEventLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 1);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 1);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 2);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -1555,6 +1663,8 @@ public final class ExpirationHandlerTest {
     assertThat(fileGroupsMetadata.read(TEST_KEY_1).get()).isNotNull();
     verify(mockBlobStoreBackend, never()).deleteFile(blobUri);
     verify(mockBackend).deleteFile(tempTestUri2);
+    verify(mockEventLogger).logMddDataDownloadFileExpirationEvent(0, 1);
+    verifyNoMoreInteractions(mockEventLogger);
   }
 
   @Test
@@ -1577,8 +1687,8 @@ public final class ExpirationHandlerTest {
 
     NewFileKey[] fileKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(dataFileGroup);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups())
         .thenReturn(Futures.immediateFuture(groups))
         .thenReturn(Futures.immediateFuture(new ArrayList<>()));
@@ -1621,8 +1731,8 @@ public final class ExpirationHandlerTest {
     NewFileKey[] fileKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(dataFileGroup);
 
     // Setup mocks to return our fresh group
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, dataFileGroup));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, dataFileGroup));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKeys[0]))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));
@@ -1710,8 +1820,8 @@ public final class ExpirationHandlerTest {
             .build();
     NewFileKey[] fileKeys = MddTestUtil.createFileKeysForDataFileGroupInternal(isolatedGroup1);
 
-    List<Pair<GroupKey, DataFileGroupInternal>> groups =
-        Arrays.asList(Pair.create(TEST_KEY_1, isolatedGroup1));
+    List<GroupKeyAndGroup> groups =
+        Arrays.asList(GroupKeyAndGroup.create(TEST_KEY_1, isolatedGroup1));
     when(mockFileGroupsMetadata.getAllFreshGroups()).thenReturn(Futures.immediateFuture(groups));
     when(mockSharedFileManager.getFileStatus(fileKeys[0]))
         .thenReturn(Futures.immediateFuture(FileStatus.DOWNLOAD_COMPLETE));

@@ -15,7 +15,6 @@
  */
 package com.google.android.libraries.mobiledatadownload.monitor;
 
-import static com.google.android.libraries.mobiledatadownload.tracing.TracePropagation.propagateFutureCallback;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -31,8 +30,8 @@ import com.google.android.libraries.mobiledatadownload.file.monitors.ByteCountin
 import com.google.android.libraries.mobiledatadownload.file.spi.Monitor;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LoggingStateStore;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mobiledatadownload.internal.MetadataProto.FileGroupLoggingState;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
@@ -98,6 +97,7 @@ public class NetworkUsageMonitor implements Monitor {
    * @param uri The Uri of the data file.
    * @param groupKey The groupKey part of the file group.
    * @param buildId The build id of the file group.
+   * @param variantId The variant id of the file group.
    * @param versionNumber The version number of the file group.
    * @param loggingStateStore The storage for the network usage logs
    */
@@ -105,12 +105,14 @@ public class NetworkUsageMonitor implements Monitor {
       Uri uri,
       GroupKey groupKey,
       long buildId,
+      String variantId,
       int versionNumber,
       LoggingStateStore loggingStateStore) {
     FileGroupLoggingState fileGroupLoggingStateKey =
         FileGroupLoggingState.newBuilder()
             .setGroupKey(groupKey)
             .setBuildId(buildId)
+            .setVariantId(variantId)
             .setFileGroupVersionNumber(versionNumber)
             .build();
 
@@ -189,26 +191,25 @@ public class NetworkUsageMonitor implements Monitor {
                   .setWifiUsage(wifiCounter.getAndSet(0))
                   .build());
 
-      Futures.addCallback(
+      PropagatedFutures.addCallback(
           incrementDataUsage,
-          propagateFutureCallback(
-              new FutureCallback<Void>() {
-                @Override
-                public void onSuccess(Void unused) {
-                  LogUtil.d(
-                      "%s: Successfully incremented LoggingStateStore network usage for %s",
-                      TAG, fileGroupLoggingStateKey.getGroupKey().getGroupName());
-                }
+          new FutureCallback<Void>() {
+            @Override
+            public void onSuccess(Void unused) {
+              LogUtil.d(
+                  "%s: Successfully incremented LoggingStateStore network usage for %s",
+                  TAG, fileGroupLoggingStateKey.getGroupKey().getGroupName());
+            }
 
-                @Override
-                public void onFailure(Throwable t) {
-                  LogUtil.e(
-                      t,
-                      "%s: Unable to increment LoggingStateStore network usage for %s",
-                      TAG,
-                      fileGroupLoggingStateKey.getGroupKey().getGroupName());
-                }
-              }),
+            @Override
+            public void onFailure(Throwable t) {
+              LogUtil.e(
+                  t,
+                  "%s: Unable to increment LoggingStateStore network usage for %s",
+                  TAG,
+                  fileGroupLoggingStateKey.getGroupKey().getGroupName());
+            }
+          },
           directExecutor());
     }
   }

@@ -17,9 +17,13 @@
 -->
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools"
   package="com.google.android.libraries.mobiledatadownload.testing" >
 
-  <uses-sdk android:minSdkVersion="16" />
+<!-- Use min sdk of 16, but allow TestParameterInjector to override this since its min sdk is 24 -->
+<uses-sdk
+  tools:overrideLibrary="com.google.android.libraries.mobiledatadownload.testing, com.google.testing.junit.testparameterinjector"
+  android:minSdkVersion="16" />
 
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission

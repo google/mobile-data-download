@@ -21,6 +21,7 @@ import com.google.android.libraries.mobiledatadownload.file.common.MalformedUriE
 import com.google.android.libraries.mobiledatadownload.file.common.internal.LiteTransformFragments;
 import com.google.android.libraries.mobiledatadownload.file.transforms.TransformProtos;
 import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.mobiledatadownload.TransformProto;
 
 /**
@@ -45,6 +46,7 @@ public final class MemoryUri {
     private Builder() {}
 
     /** Sets the non-empty key to be used as a file identifier. */
+    @CanIgnoreReturnValue
     public Builder setKey(String key) {
       this.key = key;
       return this;
@@ -53,6 +55,7 @@ public final class MemoryUri {
     /**
      * Appends a transform to the Uri. Calling twice with the same transform replaces the original.
      */
+    @CanIgnoreReturnValue
     public Builder withTransform(TransformProto.Transform spec) {
       encodedSpecs.add(TransformProtos.toEncodedSpec(spec));
       return this;

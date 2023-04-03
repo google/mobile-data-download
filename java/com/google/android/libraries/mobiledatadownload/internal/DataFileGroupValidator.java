@@ -20,7 +20,6 @@ import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.file.transforms.TransformProtos;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
-import com.google.mobiledatadownload.TransformProto.Transforms;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile.ChecksumType;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
@@ -28,6 +27,7 @@ import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInterna
 import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile.DiffDecoder;
 import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
+import com.google.mobiledatadownload.TransformProto.Transforms;
 
 /** DataFileGroupValidator - validates the passed in DataFileGroup */
 public class DataFileGroupValidator {

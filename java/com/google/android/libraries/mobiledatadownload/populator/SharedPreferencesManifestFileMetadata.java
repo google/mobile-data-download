@@ -17,13 +17,13 @@ package com.google.android.libraries.mobiledatadownload.populator;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedPreferencesUtil;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.populator.MetadataProto.ManifestFileBookkeeping;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 

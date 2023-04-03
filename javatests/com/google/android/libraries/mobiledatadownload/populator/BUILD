@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -43,7 +44,6 @@ android_local_test(
     },
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/populator:LocationProvider",
-        "@androidx_test",
         "@mockito",
         "@truth",
     ],
@@ -91,6 +91,7 @@ android_local_test(
         "targetSdkVersion": "27",
     },
     deps = [
+        "//java/com/google/android/libraries/mobiledatadownload:Flags",
         "//java/com/google/android/libraries/mobiledatadownload/populator:LocaleOverrider",
         "//java/com/google/android/libraries/mobiledatadownload/populator:MigrationProxyLocaleOverrider",
         "//proto:download_config_java_proto_lite",

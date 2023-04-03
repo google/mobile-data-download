@@ -23,6 +23,7 @@ import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.TimeSource;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
+import com.google.android.libraries.mobiledatadownload.internal.AndroidTimeSource;
 import com.google.android.libraries.mobiledatadownload.internal.ApplicationContext;
 import com.google.android.libraries.mobiledatadownload.internal.FileGroupsMetadata;
 import com.google.android.libraries.mobiledatadownload.internal.SharedFilesMetadata;
@@ -33,13 +34,14 @@ import com.google.android.libraries.mobiledatadownload.internal.experimentation.
 import com.google.android.libraries.mobiledatadownload.internal.experimentation.NoOpDownloadStageManager;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LoggingStateStore;
-import com.google.android.libraries.mobiledatadownload.internal.logging.NoOpLoggingState;
+import com.google.android.libraries.mobiledatadownload.internal.logging.SharedPreferencesLoggingState;
 import com.google.android.libraries.mobiledatadownload.internal.util.FuturesUtil;
 import com.google.android.libraries.mobiledatadownload.monitor.DownloadProgressMonitor;
 import com.google.android.libraries.mobiledatadownload.monitor.NetworkUsageMonitor;
 import com.google.common.base.Optional;
 import dagger.Module;
 import dagger.Provides;
+import java.security.SecureRandom;
 import java.util.concurrent.Executor;
 import javax.inject.Singleton;
 
@@ -49,17 +51,25 @@ public class MainMddLibModule {
   /** The version of MDD library. Same as mdi_download module version. */
   // TODO(b/122271766): Figure out how to update this automatically.
   // LINT.IfChange
-  public static final int MDD_LIB_VERSION = 422883838;
+  public static final int MDD_LIB_VERSION = 516938429;
   // LINT.ThenChange(<internal>)
 
   private final SynchronousFileStorage fileStorage;
+
   private final NetworkUsageMonitor networkUsageMonitor;
+
   private final EventLogger eventLogger;
+
   private final Optional<DownloadProgressMonitor> downloadProgressMonitorOptional;
+
   private final Optional<SilentFeedback> silentFeedbackOptional;
+
   private final Optional<String> instanceId;
+
   private final Optional<AccountSource> accountSourceOptional;
+
   private final Flags flags;
+
   private final Optional<ExperimentationConfig> experimentationConfigOptional;
 
   public MainMddLibModule(
@@ -99,12 +109,14 @@ public class MainMddLibModule {
 
   @Provides
   @Singleton
+  @SuppressWarnings("Framework.StaticProvides")
   EventLogger provideEventLogger() {
     return eventLogger;
   }
 
   @Provides
   @Singleton
+  @SuppressWarnings("Framework.StaticProvides")
   SilentFeedback providesSilentFeedback() {
     if (this.silentFeedbackOptional.isPresent()) {
       return this.silentFeedbackOptional.get();
@@ -117,6 +129,7 @@ public class MainMddLibModule {
 
   @Provides
   @Singleton
+  @SuppressWarnings("Framework.StaticProvides")
   Optional<AccountSource> provideAccountSourceOptional(@ApplicationContext Context context) {
     return this.accountSourceOptional;
   }
@@ -124,24 +137,27 @@ public class MainMddLibModule {
   @Provides
   @Singleton
   static TimeSource provideTimeSource() {
-    return System::currentTimeMillis;
+    return new AndroidTimeSource();
   }
 
   @Provides
   @Singleton
   @InstanceId
+  @SuppressWarnings("Framework.StaticProvides")
   Optional<String> provideInstanceId() {
     return this.instanceId;
   }
 
   @Provides
   @Singleton
+  @SuppressWarnings("Framework.StaticProvides")
   NetworkUsageMonitor provideNetworkUsageMonitor() {
     return this.networkUsageMonitor;
   }
 
   @Provides
   @Singleton
+  @SuppressWarnings("Framework.StaticProvides")
   // TODO: We don't need to have @Singleton here and few other places in this class
   // since it comes from the this instance. We should remove this since it could increase APK size.
   Optional<DownloadProgressMonitor> provideDownloadProgressMonitor() {
@@ -150,17 +166,20 @@ public class MainMddLibModule {
 
   @Provides
   @Singleton
+  @SuppressWarnings("Framework.StaticProvides")
   SynchronousFileStorage provideSynchronousFileStorage() {
     return this.fileStorage;
   }
 
   @Provides
   @Singleton
+  @SuppressWarnings("Framework.StaticProvides")
   Flags provideFlags() {
     return this.flags;
   }
 
   @Provides
+  @SuppressWarnings("Framework.StaticProvides")
   Optional<ExperimentationConfig> provideExperimentationConfigOptional() {
     return this.experimentationConfigOptional;
   }
@@ -173,12 +192,18 @@ public class MainMddLibModule {
 
   @Provides
   @Singleton
-  static LoggingStateStore provideLoggingStateStore() {
-    return new NoOpLoggingState();
+  static LoggingStateStore provideLoggingStateStore(
+      @ApplicationContext Context context,
+      @InstanceId Optional<String> instanceId,
+      TimeSource timeSource,
+      @SequentialControlExecutor Executor sequentialExecutor) {
+    return SharedPreferencesLoggingState.createFromContext(
+        context, instanceId, timeSource, sequentialExecutor, new SecureRandom());
   }
 
   @Provides
-  static DownloadStageManager provideDownloadStageManager(
+  @SuppressWarnings("Framework.StaticProvides")
+  DownloadStageManager provideDownloadStageManager(
       FileGroupsMetadata fileGroupsMetadata,
       Optional<ExperimentationConfig> experimentationConfigOptional,
       @SequentialControlExecutor Executor executor,

@@ -71,7 +71,7 @@ public final class ExceptionHandler {
       return (DownloadException) throwable;
     }
 
-    DownloadResultCode code = mapExceptionToDownloadResultCode(throwable, /* iteration = */ 0);
+    DownloadResultCode code = mapExceptionToDownloadResultCode(throwable, /* iteration= */ 0);
 
     return DownloadException.builder()
         .setMessage(message)

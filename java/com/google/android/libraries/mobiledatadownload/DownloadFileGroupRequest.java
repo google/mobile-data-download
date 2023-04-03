@@ -27,12 +27,10 @@ import javax.annotation.concurrent.Immutable;
 public abstract class DownloadFileGroupRequest {
 
   /** Defines notifiction behavior for foreground download requests. */
-  // LINT.IfChange(show_notifications)
   public enum ShowNotifications {
     NONE,
     ALL,
   }
-  // LINT.ThenChange(<internal>)
 
   DownloadFileGroupRequest() {}
 
@@ -81,11 +79,16 @@ public abstract class DownloadFileGroupRequest {
 
   public abstract boolean preserveZipDirectories();
 
+  public abstract boolean verifyIsolatedStructure();
+
+  public abstract Builder toBuilder();
+
   public static Builder newBuilder() {
     return new AutoValue_DownloadFileGroupRequest.Builder()
         .setGroupSizeBytes(0)
         .setShowNotifications(ShowNotifications.ALL)
-        .setPreserveZipDirectories(false);
+        .setPreserveZipDirectories(false)
+        .setVerifyIsolatedStructure(true);
   }
 
   /** Builder for {@link DownloadFileGroupRequest}. */
@@ -153,6 +156,21 @@ public abstract class DownloadFileGroupRequest {
      * directories as ClientDataFiles.
      */
     public abstract Builder setPreserveZipDirectories(boolean preserve);
+
+    /**
+     * By default, file groups will isolated structures will have this structure checked for each
+     * file when returning the file group. If the isolated structure is not correct, MDD will return
+     * a failure.
+     *
+     * <p>Setting this option to false allows clients to bypass this check, reducing the latency for
+     * critical callpaths.
+     *
+     * <p>For groups that do not have an isolated structure, this option is a no-op.
+     *
+     * <p>NOTE: All groups with isolated structures are also verified/fixed during MDD's maintenance
+     * periodic task.
+     */
+    public abstract Builder setVerifyIsolatedStructure(boolean verifyIsolatedStructure);
 
     public abstract DownloadFileGroupRequest build();
   }

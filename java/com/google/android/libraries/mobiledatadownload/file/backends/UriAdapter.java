@@ -22,7 +22,7 @@ import java.io.File;
 /**
  * Interface for converting certain URI schemes to raw java.io.Files. Implementations of this are
  * considered dangerous since they ignore parts of the URI incluging the fragment at the caller's
- * peril, and thus is only available to allowlisted clients (mostly internal).
+ * peril, and thus is only available to whitelisted clients (mostly internal).
  */
 interface UriAdapter {
   /**

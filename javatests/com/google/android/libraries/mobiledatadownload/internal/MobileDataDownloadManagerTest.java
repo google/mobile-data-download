@@ -16,17 +16,20 @@
 package com.google.android.libraries.mobiledatadownload.internal;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static java.util.concurrent.TimeUnit.DAYS;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -38,6 +41,13 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFile.ChecksumType;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
+import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions;
+import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
+import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceStoragePolicy;
+import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.FileSource;
@@ -45,17 +55,18 @@ import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.file.common.testing.TemporaryUri;
 import com.google.android.libraries.mobiledatadownload.internal.FileGroupManager.GroupDownloadStatus;
 import com.google.android.libraries.mobiledatadownload.internal.Migrations.FileKeyVersion;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
 import com.google.android.libraries.mobiledatadownload.internal.experimentation.NoOpDownloadStageManager;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.FileGroupStatsLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LoggingStateStore;
 import com.google.android.libraries.mobiledatadownload.internal.logging.NetworkLogger;
-import com.google.android.libraries.mobiledatadownload.internal.logging.NoOpLoggingState;
 import com.google.android.libraries.mobiledatadownload.internal.logging.StorageLogger;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedPreferencesUtil;
 import com.google.android.libraries.mobiledatadownload.testing.FakeTimeSource;
+import com.google.android.libraries.mobiledatadownload.testing.MddTestDependencies;
 import com.google.android.libraries.mobiledatadownload.testing.TestFlags;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -64,20 +75,15 @@ import com.google.common.labs.concurrent.LabsFutures;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
 import com.google.mobiledatadownload.TransformProto.CompressTransform;
 import com.google.mobiledatadownload.TransformProto.Transform;
 import com.google.mobiledatadownload.TransformProto.Transforms;
 import com.google.mobiledatadownload.TransformProto.ZipTransform;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile.ChecksumType;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
-import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions;
-import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
-import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceStoragePolicy;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.protobuf.ByteString;
 import java.io.IOException;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -88,6 +94,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
@@ -120,8 +127,12 @@ public class MobileDataDownloadManagerTest {
   private Context context;
   private MobileDataDownloadManager mddManager;
   private final TestFlags flags = new TestFlags();
-  @Rule public final TemporaryUri tmpUri = new TemporaryUri();
-  @Rule public final MockitoRule mocks = MockitoJUnit.rule();
+
+  @Rule(order = 2)
+  public final TemporaryUri tmpUri = new TemporaryUri();
+
+  @Rule(order = 3)
+  public final MockitoRule mocks = MockitoJUnit.rule();
 
   @Mock EventLogger mockLogger;
   @Mock SharedFileManager mockSharedFileManager;
@@ -146,7 +157,9 @@ public class MobileDataDownloadManagerTest {
     this.testClock = new FakeTimeSource();
     testClock.advance(1, DAYS);
 
-    loggingStateStore = new NoOpLoggingState();
+    loggingStateStore =
+        MddTestDependencies.LoggingStateStoreImpl.SHARED_PREFERENCES.loggingStateStore(
+            context, Optional.absent(), testClock, CONTROL_EXECUTOR, new Random());
 
     loggingStateStore.getAndResetDaysSinceLastMaintenance().get();
     testClock.advance(1, DAYS); // The next call into logging state store will return 1
@@ -174,14 +187,21 @@ public class MobileDataDownloadManagerTest {
 
     // Enable migrations so that init doesn't run all migrations before each test.
     setMigrationState(MobileDataDownloadManager.MDD_MIGRATED_TO_OFFROAD, true);
+
     when(mockSharedFileManager.init()).thenReturn(Futures.immediateFuture(true));
     when(mockSharedFileManager.clear()).thenReturn(Futures.immediateFuture(null));
     when(mockSharedFileManager.cancelDownload(any())).thenReturn(Futures.immediateFuture(null));
     when(mockSharedFileManager.cancelDownloadAndClear()).thenReturn(Futures.immediateFuture(null));
+
     when(mockSharedFilesMetadata.init()).thenReturn(Futures.immediateFuture(true));
+    when(mockSharedFilesMetadata.clear()).thenReturn(immediateVoidFuture());
+
     when(mockFileGroupsMetadata.init()).thenReturn(Futures.immediateFuture(null));
     when(mockFileGroupsMetadata.clear()).thenReturn(Futures.immediateFuture(null));
-    when(mockSharedFilesMetadata.clear()).thenReturn(Futures.immediateFuture(null));
+    when(mockFileGroupsMetadata.getAllStaleGroups())
+        .thenReturn(Futures.immediateFuture(ImmutableList.of()));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(Futures.immediateFuture(ImmutableList.of()));
   }
 
   @After
@@ -231,15 +251,21 @@ public class MobileDataDownloadManagerTest {
     // This tests that the default value of {allowed_readers, allowed_readers_enum} is to allow
     // access to all 1p google apps.
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 1);
-    when(mockFileGroupManager.addGroupForDownload(TEST_KEY, dataFileGroup))
+    when(mockFileGroupManager.addGroupForDownload(eq(TEST_KEY), eq(dataFileGroup)))
         .thenReturn(Futures.immediateFuture(true));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any()))
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(immediateFuture(dataFileGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any()))
         .thenReturn(Futures.immediateFuture(GroupDownloadStatus.PENDING));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, dataFileGroup))));
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     verify(mockFileGroupManager).addGroupForDownload(TEST_KEY, dataFileGroup);
     verify(mockFileGroupManager)
-        .verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any());
+        .verifyGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any());
     verifyNoInteractions(mockLogger);
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
@@ -264,13 +290,19 @@ public class MobileDataDownloadManagerTest {
             .build();
     when(mockFileGroupManager.addGroupForDownload(TEST_KEY, dataFileGroup))
         .thenReturn(Futures.immediateFuture(true));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any()))
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(immediateFuture(dataFileGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any()))
         .thenReturn(Futures.immediateFuture(GroupDownloadStatus.PENDING));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, dataFileGroup))));
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     verify(mockFileGroupManager).addGroupForDownload(TEST_KEY, dataFileGroup);
     verify(mockFileGroupManager)
-        .verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any());
+        .verifyGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any());
     verifyNoInteractions(mockLogger);
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
@@ -283,13 +315,19 @@ public class MobileDataDownloadManagerTest {
         MddTestUtil.createFileGroupInternalWithDeltaFile(TEST_GROUP);
     when(mockFileGroupManager.addGroupForDownload(TEST_KEY, dataFileGroup))
         .thenReturn(Futures.immediateFuture(true));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any()))
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(immediateFuture(dataFileGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any()))
         .thenReturn(Futures.immediateFuture(GroupDownloadStatus.PENDING));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, dataFileGroup))));
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     verify(mockFileGroupManager).addGroupForDownload(TEST_KEY, dataFileGroup);
     verify(mockFileGroupManager)
-        .verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any());
+        .verifyGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any());
     verifyNoInteractions(mockLogger);
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
@@ -306,16 +344,22 @@ public class MobileDataDownloadManagerTest {
             .build();
     when(mockFileGroupManager.addGroupForDownload(TEST_KEY, dataFileGroup))
         .thenReturn(Futures.immediateFuture(true));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any()))
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(immediateFuture(dataFileGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any()))
         .thenReturn(Futures.immediateFuture(GroupDownloadStatus.DOWNLOADED));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, dataFileGroup))));
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     verify(mockFileGroupManager).addGroupForDownload(TEST_KEY, dataFileGroup);
     verify(mockFileGroupManager)
-        .verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any());
+        .verifyGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any());
     verify(mockLogger)
         .logEventSampled(
-            0,
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
             TEST_GROUP,
             /* fileGroupVersionNumber= */ 0,
             /* buildId= */ dataFileGroup.getBuildId(),
@@ -378,15 +422,20 @@ public class MobileDataDownloadManagerTest {
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 1);
     when(mockFileGroupManager.addGroupForDownload(TEST_KEY, dataFileGroup))
         .thenReturn(Futures.immediateFuture(true), Futures.immediateFuture(false));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(
-            eq(TEST_KEY), any(DataFileGroupInternal.class), any()))
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(immediateFuture(dataFileGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any()))
         .thenReturn(Futures.immediateFuture(GroupDownloadStatus.PENDING));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, dataFileGroup))));
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     verify(mockFileGroupManager, times(2)).addGroupForDownload(TEST_KEY, dataFileGroup);
     verify(mockFileGroupManager, times(1))
-        .verifyPendingGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), any());
+        .verifyGroupDownloaded(eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any());
     verifyNoInteractions(mockExpirationHandler);
     verifyNoInteractions(mockLogger);
   }
@@ -404,7 +453,7 @@ public class MobileDataDownloadManagerTest {
 
     verify(mockLogger)
         .logEventSampled(
-            0,
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
             "",
             /* fileGroupVersionNumber= */ 0,
             /* buildId= */ dataFileGroup.getBuildId(),
@@ -429,9 +478,14 @@ public class MobileDataDownloadManagerTest {
 
     when(mockFileGroupManager.addGroupForDownload(eq(TEST_KEY), dataFileGroupCaptor.capture()))
         .thenReturn(Futures.immediateFuture(true));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(
-            eq(TEST_KEY), any(DataFileGroupInternal.class), any()))
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(Futures.immediateFuture(dataFileGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any()))
         .thenReturn(Futures.immediateFuture(GroupDownloadStatus.PENDING));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, dataFileGroup))));
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     verifyNoInteractions(mockLogger);
@@ -468,9 +522,14 @@ public class MobileDataDownloadManagerTest {
 
     when(mockFileGroupManager.addGroupForDownload(eq(TEST_KEY), dataFileGroupCaptor.capture()))
         .thenReturn(Futures.immediateFuture(true));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(
-            eq(TEST_KEY), any(DataFileGroupInternal.class), any()))
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(immediateFuture(dataFileGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(dataFileGroup), anyBoolean(), any(), any()))
         .thenReturn(Futures.immediateFuture(GroupDownloadStatus.PENDING));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, dataFileGroup))));
 
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isTrue();
     verifyNoInteractions(mockLogger);
@@ -498,7 +557,11 @@ public class MobileDataDownloadManagerTest {
     assertThat(mddManager.addGroupForDownload(TEST_KEY, dataFileGroup).get()).isFalse();
     verify(mockLogger)
         .logEventSampled(
-            0, TEST_GROUP, /* fileGroupVersionNumber= */ 0, /* buildId= */ 0, /* variantId= */ "");
+            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+            TEST_GROUP,
+            /* fileGroupVersionNumber= */ 0,
+            /* buildId= */ 0,
+            /* variantId= */ "");
     verifyNoInteractions(mockFileGroupManager);
   }
 
@@ -519,8 +582,14 @@ public class MobileDataDownloadManagerTest {
 
     when(mockFileGroupManager.addGroupForDownload(eq(TEST_KEY), any()))
         .thenReturn(Futures.immediateFuture(true));
-    when(mockFileGroupManager.verifyPendingGroupDownloaded(eq(TEST_KEY), any(), any()))
-        .thenReturn(Futures.immediateFuture(GroupDownloadStatus.DOWNLOADED));
+    when(mockFileGroupManager.getFileGroup(eq(TEST_KEY), anyBoolean()))
+        .thenReturn(immediateFuture(sideloadedGroup));
+    when(mockFileGroupManager.verifyGroupDownloaded(
+            eq(TEST_KEY), eq(sideloadedGroup), anyBoolean(), any(), any()))
+        .thenReturn(Futures.immediateFuture(GroupDownloadStatus.PENDING));
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(ImmutableList.of(GroupKeyAndGroup.create(TEST_KEY, sideloadedGroup))));
 
     {
       // Force sideloading off
@@ -645,14 +714,23 @@ public class MobileDataDownloadManagerTest {
   public void testGetDataFileUri() throws Exception {
     DataFileGroupInternal dataFileGroup = MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2);
 
-    when(mockFileGroupManager.getOnDeviceUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(fileUri1));
-    when(mockFileGroupManager.getOnDeviceUri(dataFileGroup.getFile(1), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(fileUri2));
+    when(mockFileGroupManager.getOnDeviceUris(dataFileGroup))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(
+                    dataFileGroup.getFile(0), fileUri1, dataFileGroup.getFile(1), fileUri2)));
 
-    assertThat(mddManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup).get())
+    assertThat(
+            mddManager
+                .getDataFileUri(
+                    dataFileGroup.getFile(0), dataFileGroup, /* verifyIsolatedStructure= */ true)
+                .get())
         .isEqualTo(fileUri1);
-    assertThat(mddManager.getDataFileUri(dataFileGroup.getFile(1), dataFileGroup).get())
+    assertThat(
+            mddManager
+                .getDataFileUri(
+                    dataFileGroup.getFile(1), dataFileGroup, /* verifyIsolatedStructure= */ true)
+                .get())
         .isEqualTo(fileUri2);
   }
 
@@ -670,14 +748,23 @@ public class MobileDataDownloadManagerTest {
             .setFile(0, dataFileGroup.getFile(0).toBuilder().setReadTransforms(compressTransform))
             .build();
 
-    when(mockFileGroupManager.getOnDeviceUri(dataFileGroup.getFile(0), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(fileUri1));
-    when(mockFileGroupManager.getOnDeviceUri(dataFileGroup.getFile(1), dataFileGroup))
-        .thenReturn(Futures.immediateFuture(fileUri2));
+    when(mockFileGroupManager.getOnDeviceUris(dataFileGroup))
+        .thenReturn(
+            Futures.immediateFuture(
+                ImmutableMap.of(
+                    dataFileGroup.getFile(0), fileUri1, dataFileGroup.getFile(1), fileUri2)));
 
-    assertThat(mddManager.getDataFileUri(dataFileGroup.getFile(0), dataFileGroup).get())
+    assertThat(
+            mddManager
+                .getDataFileUri(
+                    dataFileGroup.getFile(0), dataFileGroup, /* verifyIsolatedStructure= */ true)
+                .get())
         .isEqualTo(fileUri1.buildUpon().encodedFragment("transform=compress").build());
-    assertThat(mddManager.getDataFileUri(dataFileGroup.getFile(1), dataFileGroup).get())
+    assertThat(
+            mddManager
+                .getDataFileUri(
+                    dataFileGroup.getFile(1), dataFileGroup, /* verifyIsolatedStructure= */ true)
+                .get())
         .isEqualTo(fileUri2);
   }
 
@@ -695,13 +782,18 @@ public class MobileDataDownloadManagerTest {
         FileGroupUtil.getIsolatedFileUri(
             context, Optional.absent(), relativePathFile, testFileGroup);
 
-    when(mockFileGroupManager.getOnDeviceUri(testFileGroup.getFile(0), testFileGroup))
-        .thenReturn(Futures.immediateFuture(fileUri1));
-    when(mockFileGroupManager.getAndVerifyIsolatedFileUri(
-            fileUri1, relativePathFile, testFileGroup))
-        .thenReturn(symlinkedUri);
+    when(mockFileGroupManager.getOnDeviceUris(testFileGroup))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of(testFileGroup.getFile(0), fileUri1)));
+    when(mockFileGroupManager.getIsolatedFileUris(testFileGroup))
+        .thenReturn(ImmutableMap.of(testFileGroup.getFile(0), symlinkedUri));
+    when(mockFileGroupManager.verifyIsolatedFileUris(any(), any()))
+        .thenReturn(ImmutableMap.of(testFileGroup.getFile(0), symlinkedUri));
 
-    assertThat(mddManager.getDataFileUri(relativePathFile, testFileGroup).get())
+    assertThat(
+            mddManager
+                .getDataFileUri(
+                    relativePathFile, testFileGroup, /* verifyIsolatedStructure= */ true)
+                .get())
         .isEqualTo(symlinkedUri);
   }
 
@@ -715,13 +807,17 @@ public class MobileDataDownloadManagerTest {
             .addFile(relativePathFile)
             .build();
 
-    when(mockFileGroupManager.getOnDeviceUri(testFileGroup.getFile(0), testFileGroup))
-        .thenReturn(Futures.immediateFuture(fileUri1));
-    when(mockFileGroupManager.getAndVerifyIsolatedFileUri(
-            fileUri1, relativePathFile, testFileGroup))
-        .thenThrow(new IOException("test failure"));
+    when(mockFileGroupManager.getOnDeviceUris(testFileGroup))
+        .thenReturn(Futures.immediateFuture(ImmutableMap.of(testFileGroup.getFile(0), fileUri1)));
+    when(mockFileGroupManager.getIsolatedFileUris(testFileGroup)).thenReturn(ImmutableMap.of());
+    when(mockFileGroupManager.verifyIsolatedFileUris(any(), any())).thenReturn(ImmutableMap.of());
 
-    assertThat(mddManager.getDataFileUri(relativePathFile, testFileGroup).get()).isNull();
+    assertThat(
+            mddManager
+                .getDataFileUri(
+                    relativePathFile, testFileGroup, /* verifyIsolatedStructure= */ true)
+                .get())
+        .isNull();
   }
 
   @Test
@@ -867,7 +963,7 @@ public class MobileDataDownloadManagerTest {
 
     mddManager.downloadAllPendingGroups(true, noCustomValidation()).get();
 
-    verify(mockLogger).logEventSampled(0);
+    verify(mockLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     verify(mockFileGroupManager).scheduleAllPendingGroupsForDownload(eq(true), any());
     verifyNoMoreInteractions(mockLogger);
   }
@@ -880,12 +976,14 @@ public class MobileDataDownloadManagerTest {
     mddManager.verifyAllPendingGroups(noCustomValidation()).get();
 
     verify(mockFileGroupManager).verifyAllPendingGroupsDownloaded(any());
-    verify(mockLogger).logEventSampled(0);
+    verify(mockLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     verifyNoMoreInteractions(mockLogger);
   }
 
   @Test
   public void testMaintenance_mddFileExpiration() throws Exception {
+    assumeTrue(flags.mddEnableGarbageCollection());
+
     setupMaintenanceTasks();
 
     mddManager.maintenance().get();
@@ -894,8 +992,18 @@ public class MobileDataDownloadManagerTest {
 
     verify(mockExpirationHandler).updateExpiration();
 
-    verify(mockFileGroupStatsLogger).log(anyInt());
-    verify(mockLogger).logEventSampled(0);
+    verify(mockFileGroupStatsLogger).log(DEFAULT_DAYS_SINCE_LAST_LOG);
+    verify(mockLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
+  }
+
+  @Test
+  public void testMaintenance_gcFlagControlsGcDuringMaintenance() throws Exception {
+    setupMaintenanceTasks();
+    flags.mddEnableGarbageCollection = Optional.of(false);
+
+    mddManager.maintenance().get();
+
+    verify(mockExpirationHandler, never()).updateExpiration();
   }
 
   @Test
@@ -904,7 +1012,7 @@ public class MobileDataDownloadManagerTest {
 
     mddManager.maintenance().get();
 
-    verify(mockFileGroupStatsLogger).log(anyInt());
+    verify(mockStorageLogger).logStorageStats(DEFAULT_DAYS_SINCE_LAST_LOG);
   }
 
   @Test
@@ -955,11 +1063,14 @@ public class MobileDataDownloadManagerTest {
   }
 
   void setupMaintenanceTasks() {
+
     flags.enableDaysSinceLastMaintenanceTracking = Optional.of(true);
 
-    when(mockStorageLogger.logStorageStats(anyInt())).thenReturn(Futures.immediateVoidFuture());
+    when(mockStorageLogger.logStorageStats(DEFAULT_DAYS_SINCE_LAST_LOG))
+        .thenReturn(Futures.immediateVoidFuture());
     when(mockExpirationHandler.updateExpiration()).thenReturn(Futures.immediateVoidFuture());
-    when(mockFileGroupStatsLogger.log(anyInt())).thenReturn(Futures.immediateVoidFuture());
+    when(mockFileGroupStatsLogger.log(DEFAULT_DAYS_SINCE_LAST_LOG))
+        .thenReturn(Futures.immediateVoidFuture());
     when(mockNetworkLogger.log()).thenReturn(Futures.immediateVoidFuture());
     when(mockFileGroupManager.logAndDeleteForMissingSharedFiles())
         .thenReturn(Futures.immediateVoidFuture());
@@ -971,6 +1082,15 @@ public class MobileDataDownloadManagerTest {
 
     when(mockFileGroupManager.verifyAndAttemptToRepairIsolatedFiles())
         .thenReturn(immediateVoidFuture());
+  }
+
+  @Test
+  public void testRemoveExpiredGroupsAndFiles() throws Exception {
+    setupMaintenanceTasks();
+
+    mddManager.removeExpiredGroupsAndFiles().get();
+
+    verify(mockExpirationHandler).updateExpiration();
   }
 
   @Test
@@ -1001,7 +1121,7 @@ public class MobileDataDownloadManagerTest {
 
     mddManager.checkResetTrigger().get();
     verify(mockSharedFileManager).cancelDownloadAndClear();
-    verify(mockLogger).logEventSampled(0);
+    verify(mockLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     // saved reset value should be set to 2
     checkSavedResetValue(2);
     verifyNoMoreInteractions(mockLogger);
@@ -1016,7 +1136,7 @@ public class MobileDataDownloadManagerTest {
     // The second check should have no effect - clear should only be called once.
     mddManager.checkResetTrigger().get();
     verify(mockSharedFileManager).cancelDownloadAndClear();
-    verify(mockLogger).logEventSampled(0);
+    verify(mockLogger).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     // saved reset value should be set to 2
     checkSavedResetValue(2);
     verifyNoMoreInteractions(mockLogger);
@@ -1035,10 +1155,39 @@ public class MobileDataDownloadManagerTest {
     mddManager.checkResetTrigger().get();
 
     verify(mockSharedFileManager, times(2)).cancelDownloadAndClear();
-    verify(mockLogger, times(2)).logEventSampled(0);
+    verify(mockLogger, times(2)).logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     // saved reset value should be set to 2
     checkSavedResetValue(3);
     verifyNoMoreInteractions(mockLogger);
+  }
+
+  @Test
+  public void testClear_resetsExperimentIds() throws Exception {
+    flags.enableDownloadStageExperimentIdPropagation = Optional.of(true);
+
+    long buildId = 999L;
+    int experimentId = 12345;
+    DataFileGroupInternal dataFileGroup =
+        MddTestUtil.createDataFileGroupInternal(TEST_GROUP, 2).toBuilder()
+            .setBuildId(buildId)
+            .build();
+
+    when(mockFileGroupsMetadata.getAllFreshGroups())
+        .thenReturn(
+            immediateFuture(
+                ImmutableList.of(
+                    GroupKeyAndGroup.create(
+                        GroupKey.newBuilder().setGroupName(TEST_GROUP).build(), dataFileGroup))));
+
+    when(mockFileGroupsMetadata.getAllStaleGroups())
+        .thenReturn(immediateFuture(ImmutableList.of()));
+
+    mddManager.clear().get();
+
+    InOrder inOrder = inOrder(mockFileGroupsMetadata);
+
+    inOrder.verify(mockFileGroupsMetadata).getAllFreshGroups();
+    inOrder.verify(mockFileGroupsMetadata).clear();
   }
 
   private void setMigrationState(String key, boolean value) {

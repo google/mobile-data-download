@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -20,7 +21,7 @@ filegroup(
     name = "integration_test_data_files",
     testonly = 1,
     srcs = [
-        "odws1_empty",
+        "odws1_empty.jar",
         "step1.txt",
         "step2.txt",
         "zip_test_folder.zip",
@@ -32,6 +33,7 @@ filegroup(
     testonly = 1,
     srcs = [
         "full_file.txt",
+        "full_file.zlib",
         "partial_file.txt",
     ],
 )

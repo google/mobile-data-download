@@ -16,10 +16,17 @@
 package com.google.android.libraries.mobiledatadownload.file.openers;
 
 import android.net.Uri;
+import android.os.Build.VERSION;
+import android.os.Build.VERSION_CODES;
+import android.system.Os;
+import android.system.OsConstants;
+import android.system.StructStat;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.common.internal.Exceptions;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,8 +44,6 @@ import java.util.List;
  *
  * <ul>
  *   <li>Directory tree traversal is not an atomic operation
- *   <li>There are no special considerations for symlinks, meaning the opener could get caught in a
- *       recursive directory loop (i.e. a directory that contains a symlink to itself)
  * </ul>
  *
  * <p>Usage: <code>
@@ -46,10 +51,16 @@ import java.util.List;
  * </code>
  */
 public final class RecursiveDeleteOpener implements Opener<Void> {
-  private RecursiveDeleteOpener() {}
+  private boolean noFollowLinks;
 
   public static RecursiveDeleteOpener create() {
     return new RecursiveDeleteOpener();
+  }
+
+  @CanIgnoreReturnValue
+  public RecursiveDeleteOpener withNoFollowLinks() {
+    this.noFollowLinks = true;
+    return this;
   }
 
   @Override
@@ -63,12 +74,15 @@ public final class RecursiveDeleteOpener implements Opener<Void> {
     return null; // for Void return type
   }
 
-  private static void deleteRecursively(
+  private void deleteRecursively(
       SynchronousFileStorage storage, Uri uri, List<IOException> exceptions) {
+    ReadFileOpener readFileOpener = ReadFileOpener.create().withShortCircuit();
     try {
       if (storage.isDirectory(uri)) {
-        for (Uri child : storage.children(uri)) {
-          deleteRecursively(storage, child, exceptions);
+        if (!noFollowLinks || !isSymlink(uri, storage, readFileOpener)) {
+          for (Uri child : storage.children(uri)) {
+            deleteRecursively(storage, child, exceptions);
+          }
         }
         storage.deleteDirectory(uri);
       } else {
@@ -77,5 +91,24 @@ public final class RecursiveDeleteOpener implements Opener<Void> {
     } catch (IOException e) {
       exceptions.add(e);
     }
+  }
+
+  private static boolean isSymlink(
+      Uri uri, SynchronousFileStorage storage, ReadFileOpener readFileOpener) {
+    if (VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) {
+      try {
+        File file = storage.open(uri, readFileOpener);
+        if (file == null || !file.exists()) {
+          return false;
+        }
+        StructStat stat = Os.lstat(file.getAbsolutePath());
+        return (stat.st_mode & OsConstants.S_IFLNK) != 0;
+      } catch (Exception e) {
+        // NOTE: this should be ErrnoException, but we're forced to catch Exception to avoid
+        // breaking lower sdk levels (exceptions aren't stripped from dead code blocks).
+        return false;
+      }
+    }
+    return false;
   }
 }

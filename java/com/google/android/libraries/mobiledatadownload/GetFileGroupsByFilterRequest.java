@@ -41,11 +41,14 @@ public abstract class GetFileGroupsByFilterRequest {
 
   public abstract boolean preserveZipDirectories();
 
+  public abstract boolean verifyIsolatedStructure();
+
   public static Builder newBuilder() {
     return new AutoValue_GetFileGroupsByFilterRequest.Builder()
         .setIncludeAllGroups(false)
         .setGroupWithNoAccountOnly(false)
-        .setPreserveZipDirectories(false);
+        .setPreserveZipDirectories(false)
+        .setVerifyIsolatedStructure(true);
   }
 
   /** Builder for {@link GetFileGroupsByFilterRequest}. */
@@ -76,6 +79,21 @@ public abstract class GetFileGroupsByFilterRequest {
      */
     public abstract Builder setPreserveZipDirectories(boolean preserve);
 
+    /**
+     * By default, file groups will isolated structures will have this structure checked for each
+     * file when returning the file group. If the isolated structure is not correct, MDD will return
+     * a failure.
+     *
+     * <p>Setting this option to false allows clients to bypass this check, reducing the latency for
+     * critical callpaths.
+     *
+     * <p>For groups that do not have an isolated structure, this option is a no-op.
+     *
+     * <p>NOTE: All groups with isolated structures are also verified/fixed during MDD's maintenance
+     * periodic task.
+     */
+    public abstract Builder setVerifyIsolatedStructure(boolean verifyIsolatedStructure);
+
     abstract GetFileGroupsByFilterRequest autoBuild();
 
     public final GetFileGroupsByFilterRequest build() {
@@ -84,6 +102,7 @@ public abstract class GetFileGroupsByFilterRequest {
       if (getFileGroupsByFilterRequest.includeAllGroups()) {
         checkArgument(!getFileGroupsByFilterRequest.groupNameOptional().isPresent());
         checkArgument(!getFileGroupsByFilterRequest.accountOptional().isPresent());
+        checkArgument(!getFileGroupsByFilterRequest.groupWithNoAccountOnly());
       } else {
         checkArgument(
             getFileGroupsByFilterRequest.groupNameOptional().isPresent(),

@@ -19,15 +19,18 @@ import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopul
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_ID;
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_SIZE;
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_URL;
+import static com.google.android.libraries.mobiledatadownload.testing.MddTestDependencies.ExecutorType;
 import static com.google.common.truth.Truth.assertThat;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import android.app.blob.BlobStoreManager;
 import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 import androidx.test.core.app.ApplicationProvider;
-import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.libraries.mobiledatadownload.downloader.FileDownloader;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
@@ -49,9 +52,13 @@ import com.google.mobiledatadownload.ClientConfigProto.ClientFile;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions.DeviceNetworkPolicy;
+import com.google.mobiledatadownload.LogProto.MddLogData;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.util.Calendar;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import org.junit.After;
@@ -59,11 +66,12 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-@RunWith(AndroidJUnit4.class)
+@RunWith(TestParameterInjector.class)
 public class DownloadFileGroupAndroidSharingIntegrationTest {
 
   private static final String TAG = "DownloadFileGroupIntegrationTest";
@@ -72,9 +80,6 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
   private static final String TEST_DATA_RELATIVE_PATH =
       "third_party/java_src/android_libs/mobiledatadownload/javatests/com/google/android/libraries/mobiledatadownload/testdata/";
 
-  // Note: Control Executor must not be a single thread executor.
-  private static final ListeningExecutorService CONTROL_EXECUTOR =
-      MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
   private static final ScheduledExecutorService DOWNLOAD_EXECUTOR =
       Executors.newScheduledThreadPool(2);
 
@@ -106,15 +111,24 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
   private BlobStoreBackend blobStoreBackend;
   private BlobStoreManager blobStoreManager;
   private MobileDataDownload mobileDataDownload;
+  private ListeningExecutorService controlExecutor;
 
   private final TestFlags flags = new TestFlags();
 
   @Rule public final MockitoRule mocks = MockitoJUnit.rule();
 
+  // TODO(b/226405643): Some tests seem to fail due to BlobStore not clearing out files across runs.
+  // Investigate why this is happening and enable single-threaded tests.
+  @TestParameter({"MULTI_THREADED"})
+  ExecutorType controlExecutorType;
+
   @Before
   public void setUp() throws Exception {
+
     flags.mddAndroidSharingSampleInterval = Optional.of(1);
+
     flags.mddDefaultSampleInterval = Optional.of(1);
+
     blobStoreBackend = new BlobStoreBackend(context);
     blobStoreManager = (BlobStoreManager) context.getSystemService(Context.BLOB_STORE_SERVICE);
 
@@ -127,26 +141,7 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
             /* transforms= */ ImmutableList.of(new CompressTransform()),
             /* monitors= */ ImmutableList.of(mockNetworkUsageMonitor, mockDownloadProgressMonitor));
 
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
-
-    mobileDataDownload =
-        MobileDataDownloadBuilder.newBuilder()
-            .setContext(context)
-            .setControlExecutor(CONTROL_EXECUTOR)
-            .setFileDownloaderSupplier(fileDownloaderSupplier)
-            .setTaskScheduler(Optional.of(mockTaskScheduler))
-            .setDeltaDecoderOptional(Optional.absent())
-            .setFileStorage(fileStorage)
-            .setNetworkUsageMonitor(mockNetworkUsageMonitor)
-            .setDownloadMonitorOptional(Optional.of(mockDownloadProgressMonitor))
-            .setLoggerOptional(Optional.of(mockLogger))
-            .setFlagsOptional(Optional.of(flags))
-            .build();
+    controlExecutor = controlExecutorType.executor();
   }
 
   @After
@@ -172,26 +167,7 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
             /* transforms= */ ImmutableList.of(new CompressTransform()),
             /* monitors= */ ImmutableList.of(mockNetworkUsageMonitor, mockDownloadProgressMonitor));
 
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
-
-    mobileDataDownload =
-        MobileDataDownloadBuilder.newBuilder()
-            .setContext(context)
-            .setControlExecutor(CONTROL_EXECUTOR)
-            .setFileDownloaderSupplier(fileDownloaderSupplier)
-            .setTaskScheduler(Optional.of(mockTaskScheduler))
-            .setDeltaDecoderOptional(Optional.absent())
-            .setFileStorage(fileStorage)
-            .setNetworkUsageMonitor(mockNetworkUsageMonitor)
-            .setDownloadMonitorOptional(Optional.of(mockDownloadProgressMonitor))
-            .setLoggerOptional(Optional.of(mockLogger))
-            .setFlagsOptional(Optional.of(flags))
-            .build();
+    mobileDataDownload = builderForTest().setFileStorage(fileStorage).build();
 
     Uri androidUri =
         BlobUri.builder(context).setBlobParameters(FILE_ANDROID_SHARING_CHECKSUM_1).build();
@@ -255,10 +231,25 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
     assertThat(clientFile.getFileId()).isEqualTo(FILE_ID);
     uri = Uri.parse(clientFile.getFileUri());
     assertThat(fileStorage.fileSize(uri)).isEqualTo(FILE_SIZE);
+
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1073 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger, times(2)).log(logDataCaptor.capture(), /* eventCode= */ eq(1073));
+
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    Void log1 = null;
+    Void log2 = null;
+    assertThat(logData).hasSize(2);
+
+    Void androidSharingLog = null;
+    assertThat(log1).isEqualTo(androidSharingLog);
+    assertThat(log2).isEqualTo(androidSharingLog);
   }
 
   @Test
   public void oneAndroidSharedFile_twoFileGroups_downloadedOnlyOnce() throws Exception {
+    mobileDataDownload = builderForTest().build();
+
     Uri androidUri =
         BlobUri.builder(context).setBlobParameters(FILE_ANDROID_SHARING_CHECKSUM_1).build();
     assertThat(fileStorage.exists(androidUri)).isFalse();
@@ -398,10 +389,22 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
     assertThat(uri).isEqualTo(androidUri);
     assertThat(fileStorage.exists(uri)).isTrue();
     assertThat(blobStoreManager.getLeasedBlobs()).hasSize(1);
+
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1073 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger, times(2)).log(logDataCaptor.capture(), /* eventCode= */ eq(1073));
+
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(2);
+
+    Void log1 = null;
+    Void log2 = null;
   }
 
   @Test
   public void fileAvailableInSharedStorage_neverDownloaded() throws Exception {
+    mobileDataDownload = builderForTest().build();
+
     byte[] content = "fileAvailableInSharedStorage_neverDownloaded".getBytes();
     String androidChecksum = computeDigest(content, "SHA-256");
     String checksum = computeDigest(content, "SHA-1");
@@ -481,10 +484,21 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
     assertThat(clientFile.getFileId()).isEqualTo(FILE_ID);
     uri = Uri.parse(clientFile.getFileUri());
     assertThat(fileStorage.fileSize(uri)).isEqualTo(FILE_SIZE);
+
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1073 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1073));
+
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(1);
+
+    Void log1 = null;
   }
 
   @Test
   public void fileDownloadedForFirstFileGroup_thenSharedForSecondFileGroup() throws Exception {
+    mobileDataDownload = builderForTest().build();
+
     Uri androidUri =
         BlobUri.builder(context).setBlobParameters(FILE_ANDROID_SHARING_CHECKSUM_2).build();
     assertThat(blobStoreBackend.exists(androidUri)).isFalse();
@@ -618,5 +632,35 @@ public class DownloadFileGroupAndroidSharingIntegrationTest {
     assertThat(uri).isEqualTo(androidUri);
     assertThat(fileStorage.exists(uri)).isTrue();
     assertThat(blobStoreManager.getLeasedBlobs()).hasSize(1);
+
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1073 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1073));
+
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(1);
+
+    Void log1 = null;
+  }
+
+  private MobileDataDownloadBuilder builderForTest() {
+    Supplier<FileDownloader> fileDownloaderSupplier =
+        () ->
+            new TestFileDownloader(
+                TEST_DATA_RELATIVE_PATH,
+                fileStorage,
+                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
+
+    return MobileDataDownloadBuilder.newBuilder()
+        .setContext(context)
+        .setControlExecutor(controlExecutor)
+        .setFileDownloaderSupplier(fileDownloaderSupplier)
+        .setTaskScheduler(Optional.of(mockTaskScheduler))
+        .setDeltaDecoderOptional(Optional.absent())
+        .setFileStorage(fileStorage)
+        .setNetworkUsageMonitor(mockNetworkUsageMonitor)
+        .setDownloadMonitorOptional(Optional.of(mockDownloadProgressMonitor))
+        .setLoggerOptional(Optional.of(mockLogger))
+        .setFlagsOptional(Optional.of(flags));
   }
 }

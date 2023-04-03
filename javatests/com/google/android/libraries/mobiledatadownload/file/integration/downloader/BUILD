@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -29,7 +30,6 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2",
         "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2_sp",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:bytes",
-        "@androidx_test",
         "@com_google_guava_guava",
         "@downloader",
         "@truth",

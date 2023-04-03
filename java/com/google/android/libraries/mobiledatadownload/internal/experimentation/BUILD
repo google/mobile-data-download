@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -25,6 +26,7 @@ android_library(
     srcs = ["DownloadStageManager.java"],
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
+        "@androidx_annotation_annotation",
         "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
@@ -36,6 +38,7 @@ android_library(
     deps = [
         ":DownloadStageManager",
         "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
+        "@androidx_annotation_annotation",
         "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],

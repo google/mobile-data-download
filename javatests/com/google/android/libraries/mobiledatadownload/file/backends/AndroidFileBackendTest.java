@@ -40,6 +40,7 @@ import com.google.android.libraries.mobiledatadownload.file.openers.NativeReadOp
 import com.google.android.libraries.mobiledatadownload.file.openers.ReadStreamOpener;
 import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Futures;
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -53,7 +54,9 @@ import org.robolectric.annotation.Config;
 
 /** Tests for {@link AndroidFileBackend} */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = Build.VERSION_CODES.N)
+@Config(
+    shadows = {},
+    sdk = Build.VERSION_CODES.N)
 public class AndroidFileBackendTest extends BackendTestBase {
 
   private final Context context = ApplicationProvider.getApplicationContext();
@@ -258,6 +261,70 @@ public class AndroidFileBackendTest extends BackendTestBase {
     assertThat(remoteStorage.exists(uri)).isTrue();
 
     verify(remoteBackend).exists(uri);
+  }
+
+  @Test
+  public void managedUris_isSerializedAsIntegerOnDisk() throws Exception {
+    Account account = new Account("<internal>@gmail.com", "google.com");
+    AccountManager mockManager = mock(AccountManager.class);
+    when(mockManager.getAccountId(account)).thenReturn(Futures.immediateFuture(123));
+
+    AndroidFileBackend backend =
+        AndroidFileBackend.builder(context).setAccountManager(mockManager).build();
+    SynchronousFileStorage storage = new SynchronousFileStorage(ImmutableList.of(backend));
+
+    Uri uri =
+        Uri.parse(
+            "android://"
+                + context.getPackageName()
+                + "/managed/common/google.com%3Ayou%40gmail.com/file");
+    createFile(storage, uri, TEST_CONTENT);
+    assertThat(storage.exists(uri)).isTrue();
+
+    File file = new File(context.getFilesDir(), "managed/common/123/file");
+    assertThat(file.exists()).isTrue();
+  }
+
+  @Test
+  public void managedLocation_worksWithChildren() throws Exception {
+    Account account = new Account("<internal>@gmail.com", "google.com");
+    AccountManager mockManager = mock(AccountManager.class);
+    when(mockManager.getAccount(123)).thenReturn(Futures.immediateFuture(account));
+    when(mockManager.getAccountId(account)).thenReturn(Futures.immediateFuture(123));
+
+    AndroidFileBackend backend =
+        AndroidFileBackend.builder(context).setAccountManager(mockManager).build();
+
+    Uri dirUri =
+        Uri.parse(
+            "android://"
+                + context.getPackageName()
+                + "/managed/common/google.com%3Ayou%40gmail.com/dir");
+    Uri fileUri0 = Uri.withAppendedPath(dirUri, "file-0");
+    Uri fileUri1 = Uri.withAppendedPath(dirUri, "file-1");
+    backend.createDirectory(dirUri);
+    backend.openForWrite(fileUri0).close();
+    backend.openForWrite(fileUri1).close();
+
+    assertThat(backend.children(dirUri)).containsExactly(fileUri0, fileUri1);
+  }
+
+  @Test
+  public void managedUris_worksWithToFile() throws Exception {
+    Account account = new Account("<internal>@gmail.com", "google.com");
+    AccountManager mockManager = mock(AccountManager.class);
+    when(mockManager.getAccountId(account)).thenReturn(Futures.immediateFuture(123));
+
+    AndroidFileBackend backend =
+        AndroidFileBackend.builder(context).setAccountManager(mockManager).build();
+
+    Uri uri =
+        Uri.parse(
+            "android://"
+                + context.getPackageName()
+                + "/managed/common/google.com%3Ayou%40gmail.com/file");
+    File file = backend.toFile(uri);
+    assertThat(file.getPath()).endsWith("/files/managed/common/123/file");
   }
 
   @Test

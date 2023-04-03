@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_binary", "android_instrumentation_test", "android_library", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -27,9 +28,11 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
         "//java/com/google/android/libraries/mobiledatadownload/file/behaviors:compute_uri",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing:extras",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "//java/com/google/testing/mockito",
         "@com_google_guava_guava",
         "@mockito",
         "@truth",
@@ -49,10 +52,12 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/behaviors:syncing",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:string",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:buffer",
         "@com_google_android_testing//:testrunner",
         "@com_google_guava_guava",
         "@junit",
+        "@mockito",
         "@truth",
     ],
 )
@@ -61,7 +66,11 @@ android_binary(
     name = "SyncingBehaviorAndroidTest_bin",
     testonly = 1,
     manifest = "//javatests/com/google/android/libraries/mobiledatadownload/file:AndroidManifest.xml",
-    deps = [":SyncingBehaviorAndroidTest_lib"],
+    multidex = "legacy",
+    deps = [
+        ":SyncingBehaviorAndroidTest_lib",
+        "@android_sdk_linux",
+    ],
 )
 
 android_instrumentation_test(

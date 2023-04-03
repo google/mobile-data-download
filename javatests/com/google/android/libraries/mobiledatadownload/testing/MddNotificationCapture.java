@@ -102,7 +102,7 @@ public interface MddNotificationCapture {
 
   void assertFailedNotificationCaptured(String title);
 
-  void assertPausedNotificationCaptured(String title);
+  void assertPausedNotificationCaptured(String title, boolean wifiOnly);
 
   void assertNoNotificationsCaptured();
 
@@ -150,10 +150,12 @@ public interface MddNotificationCapture {
     }
 
     @Override
-    public void assertPausedNotificationCaptured(String title) {
+    public void assertPausedNotificationCaptured(String title, boolean wifiOnly) {
       assertNotificationCapturedMatches(
           title,
-          NotificationUtil.getDownloadPausedMessage(context),
+          wifiOnly
+              ? NotificationUtil.getDownloadPausedWifiMessage(context)
+              : NotificationUtil.getDownloadPausedMessage(context),
           android.R.drawable.stat_sys_download);
     }
 
@@ -171,11 +173,9 @@ public interface MddNotificationCapture {
       assertThat(iconMatches)
           .comparingElementsUsing(
               Correspondence.<String, Integer>transforming(
-                  match -> {
-                    // Our regex should capture only valid hexadecimal values
-                    int iconResId = Integer.parseInt(match, 16);
-                    return iconResId;
-                  },
+                  match ->
+                      // Our regex should capture only valid hexadecimal values
+                      Integer.parseInt(match, 16),
                   "convert to resource id"))
           .containsNoneIn(MDD_ICON_IDS);
     }
@@ -272,12 +272,14 @@ public interface MddNotificationCapture {
     }
 
     @Override
-    public void assertPausedNotificationCaptured(String title) {
+    public void assertPausedNotificationCaptured(String title, boolean wifiOnly) {
       assertThat(notifications)
           .comparingElementsUsing(
               createMatcherForNotification(
                   title,
-                  NotificationUtil.getDownloadPausedMessage(context),
+                  wifiOnly
+                      ? NotificationUtil.getDownloadPausedWifiMessage(context)
+                      : NotificationUtil.getDownloadPausedMessage(context),
                   android.R.drawable.stat_sys_download,
                   "is a paused notification"))
           .contains(true);

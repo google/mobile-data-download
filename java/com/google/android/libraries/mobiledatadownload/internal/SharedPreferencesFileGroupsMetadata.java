@@ -15,22 +15,26 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal;
 
+import static com.google.common.util.concurrent.Futures.getDone;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
+
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.util.Pair;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.TimeSource;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupsMetadataUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupsMetadataUtil.GroupKeyDeserializationException;
 import com.google.android.libraries.mobiledatadownload.internal.util.ProtoLiteUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedPreferencesUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CheckReturnValue;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
@@ -81,44 +85,43 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
 
   @Override
   public ListenableFuture<Void> init() {
-    return Futures.immediateVoidFuture();
+    return immediateVoidFuture();
   }
 
   @Override
   public ListenableFuture<@NullableType DataFileGroupInternal> read(GroupKey groupKey) {
-    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey, context);
+    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey);
 
     SharedPreferences prefs =
         SharedPreferencesUtil.getSharedPreferences(context, MDD_FILE_GROUPS, instanceId);
     DataFileGroupInternal fileGroup =
         SharedPreferencesUtil.readProto(prefs, serializedGroupKey, DataFileGroupInternal.parser());
 
-    return Futures.immediateFuture(fileGroup);
+    return immediateFuture(fileGroup);
   }
 
   @Override
   public ListenableFuture<Boolean> write(GroupKey groupKey, DataFileGroupInternal fileGroup) {
-    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey, context);
+    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey);
 
     SharedPreferences prefs =
         SharedPreferencesUtil.getSharedPreferences(context, MDD_FILE_GROUPS, instanceId);
-    return Futures.immediateFuture(
-        SharedPreferencesUtil.writeProto(prefs, serializedGroupKey, fileGroup));
+    return immediateFuture(SharedPreferencesUtil.writeProto(prefs, serializedGroupKey, fileGroup));
   }
 
   @Override
   public ListenableFuture<Boolean> remove(GroupKey groupKey) {
-    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey, context);
+    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey);
 
     SharedPreferences prefs =
         SharedPreferencesUtil.getSharedPreferences(context, MDD_FILE_GROUPS, instanceId);
-    return Futures.immediateFuture(SharedPreferencesUtil.removeProto(prefs, serializedGroupKey));
+    return immediateFuture(SharedPreferencesUtil.removeProto(prefs, serializedGroupKey));
   }
 
   @Override
   public ListenableFuture<@NullableType GroupKeyProperties> readGroupKeyProperties(
       GroupKey groupKey) {
-    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey, context);
+    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey);
 
     SharedPreferences prefs =
         SharedPreferencesUtil.getSharedPreferences(
@@ -126,18 +129,18 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
     GroupKeyProperties groupKeyProperties =
         SharedPreferencesUtil.readProto(prefs, serializedGroupKey, GroupKeyProperties.parser());
 
-    return Futures.immediateFuture(groupKeyProperties);
+    return immediateFuture(groupKeyProperties);
   }
 
   @Override
   public ListenableFuture<Boolean> writeGroupKeyProperties(
       GroupKey groupKey, GroupKeyProperties groupKeyProperties) {
-    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey, context);
+    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey);
 
     SharedPreferences prefs =
         SharedPreferencesUtil.getSharedPreferences(
             context, MDD_FILE_GROUP_KEY_PROPERTIES, instanceId);
-    return Futures.immediateFuture(
+    return immediateFuture(
         SharedPreferencesUtil.writeProto(prefs, serializedGroupKey, groupKeyProperties));
   }
 
@@ -169,12 +172,12 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
     if (editor != null) {
       editor.commit();
     }
-    return Futures.immediateFuture(groupKeyList);
+    return immediateFuture(groupKeyList);
   }
 
   @Override
-  public ListenableFuture<List<Pair<GroupKey, DataFileGroupInternal>>> getAllFreshGroups() {
-    return Futures.transformAsync(
+  public ListenableFuture<List<GroupKeyAndGroup>> getAllFreshGroups() {
+    return PropagatedFutures.transformAsync(
         getAllGroupKeys(),
         groupKeyList -> {
           List<ListenableFuture<@NullableType DataFileGroupInternal>> groupReadFutures =
@@ -182,19 +185,19 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
           for (GroupKey key : groupKeyList) {
             groupReadFutures.add(read(key));
           }
-          return Futures.whenAllComplete(groupReadFutures)
+          return PropagatedFutures.whenAllComplete(groupReadFutures)
               .callAsync(
                   () -> {
-                    List<Pair<GroupKey, DataFileGroupInternal>> retrievedGroups = new ArrayList<>();
+                    List<GroupKeyAndGroup> retrievedGroups = new ArrayList<>();
                     for (int i = 0; i < groupKeyList.size(); i++) {
                       GroupKey key = groupKeyList.get(i);
-                      DataFileGroupInternal group = Futures.getDone(groupReadFutures.get(i));
+                      DataFileGroupInternal group = getDone(groupReadFutures.get(i));
                       if (group == null) {
                         continue;
                       }
-                      retrievedGroups.add(Pair.create(key, group));
+                      retrievedGroups.add(GroupKeyAndGroup.create(key, group));
                     }
-                    return Futures.immediateFuture(retrievedGroups);
+                    return immediateFuture(retrievedGroups);
                   },
                   sequentialControlExecutor);
         },
@@ -210,12 +213,12 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
       LogUtil.d("%s: Removing group %s %s", TAG, key.getGroupName(), key.getOwnerPackage());
       SharedPreferencesUtil.removeProto(editor, key);
     }
-    return Futures.immediateFuture(editor.commit());
+    return immediateFuture(editor.commit());
   }
 
   @Override
   public ListenableFuture<List<DataFileGroupInternal>> getAllStaleGroups() {
-    return Futures.immediateFuture(
+    return immediateFuture(
         FileGroupsMetadataUtil.getAllStaleGroups(
             FileGroupsMetadataUtil.getGarbageCollectorFile(context, instanceId)));
   }
@@ -243,7 +246,7 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
       outputStream = new FileOutputStream(garbageCollectorFile, /* append */ true);
     } catch (FileNotFoundException e) {
       LogUtil.e("File %s not found while writing.", garbageCollectorFile.getAbsolutePath());
-      return Futures.immediateFuture(false);
+      return immediateFuture(false);
     }
 
     try {
@@ -255,9 +258,9 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
       outputStream.close();
     } catch (IOException e) {
       LogUtil.e("IOException occurred while writing file groups.");
-      return Futures.immediateFuture(false);
+      return immediateFuture(false);
     }
-    return Futures.immediateFuture(true);
+    return immediateFuture(true);
   }
 
   @VisibleForTesting
@@ -269,7 +272,7 @@ public final class SharedPreferencesFileGroupsMetadata implements FileGroupsMeta
   @Override
   public ListenableFuture<Void> removeAllStaleGroups() {
     getGarbageCollectorFile().delete();
-    return Futures.immediateVoidFuture();
+    return immediateVoidFuture();
   }
 
   @Override

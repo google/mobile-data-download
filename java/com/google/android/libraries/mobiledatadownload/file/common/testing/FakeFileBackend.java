@@ -22,6 +22,7 @@ import com.google.android.libraries.mobiledatadownload.file.common.GcParam;
 import com.google.android.libraries.mobiledatadownload.file.common.LockScope;
 import com.google.android.libraries.mobiledatadownload.file.common.internal.ForwardingOutputStream;
 import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
+import com.google.errorprone.annotations.concurrent.GuardedBy;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
@@ -30,7 +31,6 @@ import java.io.OutputStream;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
-import javax.annotation.concurrent.GuardedBy;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /** A Fake Backend for testing. It allows overriding certain behavior. */
@@ -53,6 +53,7 @@ public class FakeFileBackend implements Backend {
     QUERY, // exists, isDirectory, fileSize, children, getGcParam, toFile
     MANAGE, // delete, rename, createDirectory, setGcParam
     WRITE_STREAM, // openForWrite/Append return streams that fail
+    EXISTS, // exists
   }
 
   /**
@@ -212,6 +213,7 @@ public class FakeFileBackend implements Backend {
 
   @Override
   public boolean exists(Uri uri) throws IOException {
+    throwOrSuspendIf(OperationType.EXISTS);
     throwOrSuspendIf(OperationType.QUERY);
     return delegate.exists(uri);
   }

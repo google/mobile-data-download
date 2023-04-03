@@ -22,6 +22,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFile;
+import com.google.mobiledatadownload.DownloadConfigProto.DataFile.ChecksumType;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions.DeviceNetworkPolicy;
@@ -96,14 +97,16 @@ public class TestFileGroupPopulator implements FileGroupPopulator {
                 DownloadConditions.newBuilder().setDeviceNetworkPolicy(deviceNetworkPolicy));
 
     for (int i = 0; i < fileId.length; ++i) {
-      DataFile file =
+      DataFile.Builder fileBuilder =
           DataFile.newBuilder()
               .setFileId(fileId[i])
               .setByteSize(byteSize[i])
               .setChecksum(checksum[i])
-              .setUrlToDownload(url[i])
-              .build();
-      dataFileGroupBuilder.addFile(file);
+              .setUrlToDownload(url[i]);
+      if (checksum[i].isEmpty()) {
+        fileBuilder.setChecksumType(ChecksumType.NONE);
+      }
+      dataFileGroupBuilder.addFile(fileBuilder.build());
     }
 
     return dataFileGroupBuilder.build();
@@ -139,6 +142,9 @@ public class TestFileGroupPopulator implements FileGroupPopulator {
               .setByteSize(byteSize[i])
               .setChecksum(checksum[i])
               .setUrlToDownload(url[i]);
+      if (checksum[i].isEmpty()) {
+        fileBuilder.setChecksumType(ChecksumType.NONE);
+      }
       if (!TextUtils.isEmpty(androidSharingChecksum[i])) {
         fileBuilder
             .setAndroidSharingType(DataFile.AndroidSharingType.ANDROID_BLOB_WHEN_AVAILABLE)

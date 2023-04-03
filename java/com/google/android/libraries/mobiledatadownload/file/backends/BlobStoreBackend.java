@@ -34,6 +34,7 @@ import java.io.OutputStream;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import javax.annotation.Nullable;
 
 /**
  * Backend for accessing the Android blob Sharing Service.
@@ -118,7 +119,7 @@ public final class BlobStoreBackend implements Backend {
    * @throws IOException when there is an I/O error while writing the blob/lease.
    */
   @Override
-  public OutputStream openForWrite(Uri uri) throws IOException {
+  public @Nullable OutputStream openForWrite(Uri uri) throws IOException {
     BlobUri.validateUri(uri);
     byte[] checksum = BlobUri.getChecksum(uri.getPath());
     try {

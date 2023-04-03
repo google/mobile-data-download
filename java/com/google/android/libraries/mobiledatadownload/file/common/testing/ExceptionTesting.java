@@ -23,6 +23,7 @@ import java.util.concurrent.Future;
 
 /** Common helper utilities for testing exceptions. */
 public final class ExceptionTesting {
+
   public static <T extends Throwable> T assertThrowsAsync(
       Class<T> throwableType, Future<?> future) {
     ExecutionException executionException = assertThrows(ExecutionException.class, future::get);

@@ -19,10 +19,17 @@ import static com.google.common.truth.Truth.assertThat;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
+import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
+import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
+import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
+import com.google.android.libraries.mobiledatadownload.file.backends.AndroidUri;
 import com.google.android.libraries.mobiledatadownload.internal.Migrations.FileKeyVersion;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedFilesMetadataUtil;
@@ -34,11 +41,7 @@ import com.google.common.util.concurrent.MoreExecutors;
 import com.google.mobiledatadownload.TransformProto.CompressTransform;
 import com.google.mobiledatadownload.TransformProto.Transform;
 import com.google.mobiledatadownload.TransformProto.Transforms;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
-import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
-import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
-import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -82,8 +85,11 @@ public class SharedFilesMetadataTest {
   private SynchronousFileStorage storage;
   private Context context;
   private SharedFilesMetadata sharedFilesMetadata;
+  private Uri diagnosticUri;
+  private Uri destinationUri;
 
   private final TestFlags flags = new TestFlags();
+
   @Mock SilentFeedback mockSilentFeedback;
   @Mock EventLogger mockLogger;
 
@@ -104,6 +110,17 @@ public class SharedFilesMetadataTest {
     storage =
         new SynchronousFileStorage(Arrays.asList(AndroidFileBackend.builder(context).build()));
 
+    destinationUri =
+        AndroidUri.builder(context)
+            .setPackage(context.getPackageName())
+            .setRelativePath("dest.pb")
+            .build();
+    diagnosticUri =
+        AndroidUri.builder(context)
+            .setPackage(context.getPackageName())
+            .setRelativePath("diag.pb")
+            .build();
+
     SharedPreferencesSharedFilesMetadata sharedPreferencesMetadata =
         new SharedPreferencesSharedFilesMetadata(context, mockSilentFeedback, instanceId, flags);
 
@@ -118,7 +135,13 @@ public class SharedFilesMetadataTest {
   }
 
   @After
-  public void tearDown() throws Exception {
+  public void tearDown() throws InterruptedException, ExecutionException, IOException {
+    if (storage.exists(diagnosticUri)) {
+      storage.deleteFile(diagnosticUri);
+    }
+    if (storage.exists(destinationUri)) {
+      storage.deleteFile(destinationUri);
+    }
     synchronized (SharedPreferencesSharedFilesMetadata.class) {
       sharedFilesMetadata.clear().get();
       assertThat(
@@ -314,6 +337,7 @@ public class SharedFilesMetadataTest {
   @Test
   public void testNoMigrate_corruptedMetadata() throws InterruptedException, ExecutionException {
     flags.fileKeyVersion = Optional.of(FileKeyVersion.USE_CHECKSUM_ONLY.value);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
 
     // Create two files, one downloaded and the other currently being downloaded.
