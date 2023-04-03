@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -58,6 +59,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
         "@androidx_annotation_annotation",  # buildcleaner: keep
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
     ],
 )
 
@@ -69,6 +71,7 @@ android_library(
         ":scratch",
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
     ],
 )
 
@@ -103,6 +106,7 @@ android_library(
         ":scratch",
         ":stream",
         "//java/com/google/android/libraries/mobiledatadownload/file",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_protobuf//:protobuf_lite",
     ],
 )
@@ -117,6 +121,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
     ],
 )
 
@@ -124,8 +129,10 @@ android_library(
     name = "recursive_delete",
     srcs = ["RecursiveDeleteOpener.java"],
     deps = [
+        ":file",
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:exceptions",
+        "@com_google_errorprone_error_prone_annotations",
     ],
 )
 
@@ -145,7 +152,10 @@ android_library(
         "ReadStreamOpener.java",
         "WriteStreamOpener.java",
     ],
-    deps = ["//java/com/google/android/libraries/mobiledatadownload/file"],
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "@com_google_errorprone_error_prone_annotations",
+    ],
 )
 
 android_library(
@@ -171,6 +181,7 @@ android_library(
         ":stream",
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )
@@ -185,6 +196,7 @@ android_library(
         ":bytes",
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:charsets",
+        "@com_google_errorprone_error_prone_annotations",
     ],
 )
 
@@ -198,6 +210,7 @@ android_library(
         ":stream",
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )

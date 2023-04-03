@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -36,6 +37,7 @@ android_library(
         ":DataFileGroupOverrider",
         "//java/com/google/android/libraries/mobiledatadownload",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "//proto:download_config_java_proto_lite",
         "@com_google_guava_guava",
     ],
@@ -81,6 +83,8 @@ android_library(
     deps = [
         ":ManifestConfigOverrider",
         "//java/com/google/android/libraries/mobiledatadownload",
+        "//java/com/google/android/libraries/mobiledatadownload:AggregateException",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "//proto:download_config_java_proto_lite",
         "@androidx_annotation_annotation",
@@ -105,7 +109,9 @@ android_library(
         ":ManifestConfigOverrider",
         "//java/com/google/android/libraries/mobiledatadownload",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
+        "//java/com/google/android/libraries/mobiledatadownload/populator/proto:metadata_java_proto_lite",
         "//proto:download_config_java_proto_lite",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )
@@ -131,6 +137,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/tracing",
         "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "//proto:download_config_java_proto_lite",
+        "//proto:log_enums_java_proto_lite",
         "@androidx_annotation_annotation",
         "@com_google_code_findbugs_jsr305",
         "@com_google_guava_guava",
@@ -143,8 +150,6 @@ android_library(
     srcs = [
         "ManifestFileMetadataStore.java",
     ],
-    # DO NOT ADD VISIBILITY: this isn't an open interface for clients to implement.
-    visibility = ["//visibility:private"],
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/populator/proto:metadata_java_proto_lite",
         "@com_google_guava_guava",

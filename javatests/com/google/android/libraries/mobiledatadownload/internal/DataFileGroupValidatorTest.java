@@ -19,6 +19,16 @@ import static com.google.common.truth.Truth.assertThat;
 
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.android.libraries.mdi.download.MetadataProto.BaseFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile.AndroidSharingChecksumType;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile.AndroidSharingType;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile.ChecksumType;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile.DiffDecoder;
+import com.google.android.libraries.mdi.download.MetadataProto.DownloadConditions;
+import com.google.android.libraries.mdi.download.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
 import com.google.android.libraries.mobiledatadownload.internal.Migrations.FileKeyVersion;
 import com.google.android.libraries.mobiledatadownload.testing.TestFlags;
 import com.google.common.base.Optional;
@@ -28,16 +38,6 @@ import com.google.mobiledatadownload.TransformProto.IntegrityTransform;
 import com.google.mobiledatadownload.TransformProto.Transform;
 import com.google.mobiledatadownload.TransformProto.Transforms;
 import com.google.mobiledatadownload.TransformProto.ZipTransform;
-import com.google.mobiledatadownload.internal.MetadataProto.BaseFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile.AndroidSharingChecksumType;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile.AndroidSharingType;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile.ChecksumType;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile.DiffDecoder;
-import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions;
-import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -153,6 +153,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -175,6 +176,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_featureOff() {
     flags.enableZipFolder = Optional.of(false);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -197,6 +199,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_noDownloadFileChecksum() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -218,6 +221,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_targetOneFile() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -241,6 +245,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_moreThanOneTransforms() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =

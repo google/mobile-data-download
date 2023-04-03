@@ -15,7 +15,11 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal;
 
+import static com.google.common.util.concurrent.Futures.getDone;
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -23,6 +27,17 @@ import android.net.Uri;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import androidx.annotation.VisibleForTesting;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal.AllowedReaders;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile.DiffDecoder;
+import com.google.android.libraries.mdi.download.MetadataProto.DownloadConditions;
+import com.google.android.libraries.mdi.download.MetadataProto.ExtraHttpHeader;
+import com.google.android.libraries.mdi.download.MetadataProto.FileStatus;
+import com.google.android.libraries.mdi.download.MetadataProto.GroupKey;
+import com.google.android.libraries.mdi.download.MetadataProto.NewFileKey;
+import com.google.android.libraries.mdi.download.MetadataProto.SharedFile;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.FileSource;
@@ -45,22 +60,15 @@ import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedPreferencesUtil;
 import com.google.android.libraries.mobiledatadownload.monitor.DownloadProgressMonitor;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
-import com.google.common.util.concurrent.FluentFuture;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CheckReturnValue;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile.DiffDecoder;
-import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions;
-import com.google.mobiledatadownload.internal.MetadataProto.ExtraHttpHeader;
-import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
-import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
-import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -166,7 +174,7 @@ public class SharedFileManager {
       sharedFileManagerMetadata.edit().remove(PREFS_KEY_MIGRATED_TO_NEW_FILE_KEY).commit();
     }
 
-    return Futures.immediateFuture(true);
+    return immediateFuture(true);
   }
 
   /**
@@ -178,12 +186,12 @@ public class SharedFileManager {
    */
   // TODO - refactor to throw Exception when write to SharedPreferences fails
   public ListenableFuture<Boolean> reserveFileEntry(NewFileKey newFileKey) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.read(newFileKey),
         sharedFile -> {
           if (sharedFile != null) {
             // There's already an entry for this file. Nothing to do here.
-            return Futures.immediateFuture(true);
+            return immediateFuture(true);
           }
           // Set the file name and update the metadata file.
           SharedPreferences sharedFileManagerMetadata =
@@ -198,7 +206,7 @@ public class SharedFileManager {
               .commit()) {
             // TODO(b/131166925): MDD dump should not use lite proto toString.
             LogUtil.e("%s: Unable to update file name %s", TAG, newFileKey);
-            return Futures.immediateFuture(false);
+            return immediateFuture(false);
           }
 
           String fileName = FILE_NAME_PREFIX + nextFileName;
@@ -207,7 +215,7 @@ public class SharedFileManager {
                   .setFileStatus(FileStatus.SUBSCRIBED)
                   .setFileName(fileName)
                   .build();
-          return Futures.transformAsync(
+          return PropagatedFutures.transformAsync(
               sharedFilesMetadata.write(newFileKey, sharedFile),
               writeSuccess -> {
                 if (!writeSuccess) {
@@ -215,9 +223,9 @@ public class SharedFileManager {
                   LogUtil.e(
                       "%s: Unable to write back subscription for file entry with %s",
                       TAG, newFileKey);
-                  return Futures.immediateFuture(false);
+                  return immediateFuture(false);
                 }
-                return Futures.immediateFuture(true);
+                return immediateFuture(true);
               },
               sequentialControlExecutor);
         },
@@ -239,13 +247,13 @@ public class SharedFileManager {
       @Nullable DownloadConditions downloadConditions,
       FileSource inlineFileSource) {
     if (!dataFile.getUrlToDownload().startsWith(MddConstants.INLINE_FILE_URL_SCHEME)) {
-      return Futures.immediateFailedFuture(
+      return immediateFailedFuture(
           DownloadException.builder()
               .setDownloadResultCode(DownloadResultCode.INVALID_INLINE_FILE_URL_SCHEME)
               .setMessage("Importing an inline file requires inlinefile scheme")
               .build());
     }
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.read(newFileKey),
         sharedFile -> {
           if (sharedFile == null) {
@@ -254,7 +262,7 @@ public class SharedFileManager {
                 TAG, dataFile.getFileId());
             SharedFileMissingException cause = new SharedFileMissingException();
             // TODO(b/167582815): Log to Clearcut
-            return Futures.immediateFailedFuture(
+            return immediateFailedFuture(
                 DownloadException.builder()
                     .setDownloadResultCode(DownloadResultCode.SHARED_FILE_NOT_FOUND_ERROR)
                     .setCause(cause)
@@ -274,7 +282,7 @@ public class SharedFileManager {
                       sharedFile.getFileName(), dataFile.getDownloadedFileChecksum())
                   : sharedFile.getFileName();
 
-          return Futures.transformAsync(
+          return PropagatedFutures.transformAsync(
               getDataFileGroupOrDefault(groupKey),
               dataFileGroup ->
                   getImportFuture(
@@ -313,7 +321,7 @@ public class SharedFileManager {
     ListenableFuture<Uri> downloadFileOnDeviceUriFuture =
         getDownloadFileOnDeviceUri(
             newFileKey.getAllowedReaders(), downloadFileName, dataFile.getChecksum());
-    return FluentFuture.from(downloadFileOnDeviceUriFuture)
+    return PropagatedFluentFuture.from(downloadFileOnDeviceUriFuture)
         .transformAsync(
             unused -> {
               sharedFileBuilder.setFileStatus(FileStatus.DOWNLOAD_IN_PROGRESS);
@@ -327,7 +335,7 @@ public class SharedFileManager {
             sequentialControlExecutor)
         .transformAsync(
             unused -> {
-              Uri downloadFileOnDeviceUri = Futures.getDone(downloadFileOnDeviceUriFuture);
+              Uri downloadFileOnDeviceUri = getDone(downloadFileOnDeviceUriFuture);
               DownloaderCallback downloaderCallback =
                   new DownloaderCallbackImpl(
                       sharedFilesMetadata,
@@ -345,6 +353,7 @@ public class SharedFileManager {
               // progress here.
 
               return fileDownloader.startCopying(
+                  newFileKey.getChecksum(),
                   downloadFileOnDeviceUri,
                   dataFile.getUrlToDownload(),
                   dataFile.getByteSize(),
@@ -376,7 +385,7 @@ public class SharedFileManager {
       int trafficTag,
       List<ExtraHttpHeader> extraHttpHeaders) {
     if (dataFile.getUrlToDownload().startsWith(MddConstants.INLINE_FILE_URL_SCHEME)) {
-      return Futures.immediateFailedFuture(
+      return immediateFailedFuture(
           DownloadException.builder()
               .setDownloadResultCode(DownloadResultCode.INVALID_INLINE_FILE_URL_SCHEME)
               .setMessage(
@@ -384,77 +393,134 @@ public class SharedFileManager {
                       + " instead.")
               .build());
     }
-    return Futures.transformAsync(
-        sharedFilesMetadata.read(newFileKey),
-        sharedFile -> {
-          if (sharedFile == null) {
-            // TODO(b/131166925): MDD dump should not use lite proto toString.
-            LogUtil.e(
-                "%s: Start download called on file that doesn't exists. Key = %s!",
-                TAG, newFileKey);
-            SharedFileMissingException cause = new SharedFileMissingException();
-            silentFeedback.send(cause, "Shared file not found in downloadFileGroup");
-            return Futures.immediateFailedFuture(
-                DownloadException.builder()
-                    .setDownloadResultCode(DownloadResultCode.SHARED_FILE_NOT_FOUND_ERROR)
-                    .setCause(cause)
-                    .build());
-          }
 
-          // If we have already downloaded the file, then return.
-          if (sharedFile.getFileStatus() == FileStatus.DOWNLOAD_COMPLETE) {
-            if (downloadMonitorOptional.isPresent()) {
-              // For the downloaded file, we don't need to monitor the file change. We just need to
-              // inform the monitor about its current size.
-              downloadMonitorOptional
-                  .get()
-                  .notifyCurrentFileSize(groupKey.getGroupName(), dataFile.getByteSize());
-            }
-            return immediateVoidFuture();
-          }
+    // Start futures in parallel for various calculated properties.
+    ListenableFuture<SharedFile> sharedFileFuture = getSharedFile(newFileKey);
 
-          return Futures.transformAsync(
-              findFirstDeltaFileWithBaseFileDownloaded(dataFile, newFileKey.getAllowedReaders()),
-              deltaFile -> {
-                SharedFile.Builder sharedFileBuilder = sharedFile.toBuilder();
-                String downloadFileName = sharedFile.getFileName();
-                if (deltaFile != null) {
-                  downloadFileName =
-                      FileNameUtil.getTempFileNameWithDownloadedFileChecksum(
-                          downloadFileName, deltaFile.getChecksum());
-                } else if (dataFile.hasDownloadTransforms()) {
-                  downloadFileName =
-                      FileNameUtil.getTempFileNameWithDownloadedFileChecksum(
-                          downloadFileName, dataFile.getDownloadedFileChecksum());
+    ListenableFuture<@NullableType DeltaFile> firstDeltaFileFuture =
+        findFirstDeltaFileWithBaseFileDownloaded(dataFile, newFileKey.getAllowedReaders());
+
+    ListenableFuture<String> downloadFileNameFuture =
+        PropagatedFutures.whenAllSucceed(sharedFileFuture, firstDeltaFileFuture)
+            .call(
+                () -> {
+                  String downloadFileName = getDone(sharedFileFuture).getFileName();
+                  DeltaFile deltaFile = getDone(firstDeltaFileFuture);
+                  if (deltaFile != null) {
+                    downloadFileName =
+                        FileNameUtil.getTempFileNameWithDownloadedFileChecksum(
+                            downloadFileName, deltaFile.getChecksum());
+                  } else if (dataFile.hasDownloadTransforms()) {
+                    downloadFileName =
+                        FileNameUtil.getTempFileNameWithDownloadedFileChecksum(
+                            downloadFileName, dataFile.getDownloadedFileChecksum());
+                  }
+                  return downloadFileName;
+                },
+                directExecutor());
+
+    ListenableFuture<Uri> downloadFileOnDeviceUriFuture =
+        PropagatedFutures.transformAsync(
+            downloadFileNameFuture,
+            downloadFileName ->
+                getDownloadFileOnDeviceUri(
+                    newFileKey.getAllowedReaders(), downloadFileName, dataFile.getChecksum()),
+            sequentialControlExecutor);
+
+    ListenableFuture<DataFileGroupInternal> dataFileGroupFuture =
+        getDataFileGroupOrDefault(groupKey);
+
+    // Combine all futures together so all complete successfully before continuing
+    ListenableFuture<Void> combinedPropertiesFuture =
+        PropagatedFutures.whenAllSucceed(
+                sharedFileFuture,
+                firstDeltaFileFuture,
+                downloadFileNameFuture,
+                downloadFileOnDeviceUriFuture,
+                dataFileGroupFuture)
+            .callAsync(Futures::immediateVoidFuture, directExecutor());
+
+    return PropagatedFluentFuture.from(combinedPropertiesFuture)
+        .transformAsync(
+            unused -> {
+              SharedFile sharedFile = getDone(sharedFileFuture);
+              DeltaFile deltaFile = getDone(firstDeltaFileFuture);
+              String downloadFileName = getDone(downloadFileNameFuture);
+              Uri downloadFileOnDeviceUri = getDone(downloadFileOnDeviceUriFuture);
+              DataFileGroupInternal dataFileGroup = getDone(dataFileGroupFuture);
+
+              // Check if download is complete
+              if (sharedFile.getFileStatus() == FileStatus.DOWNLOAD_COMPLETE) {
+                if (downloadMonitorOptional.isPresent()) {
+                  // For the downloaded file, we don't need to monitor the file change. We just need
+                  // to inform the monitor about its current size.
+                  downloadMonitorOptional
+                      .get()
+                      .notifyCurrentFileSize(groupKey.getGroupName(), dataFile.getByteSize());
                 }
+                return immediateVoidFuture();
+              }
 
-                // Variables captured in lambdas must be effectively final.
-                String downloadFileNameCapture = downloadFileName;
-                return Futures.transformAsync(
-                    getDataFileGroupOrDefault(groupKey),
-                    dataFileGroup ->
-                        getDownloadFuture(
-                            sharedFileBuilder,
-                            newFileKey,
-                            downloadFileNameCapture,
-                            dataFileGroup.getFileGroupVersionNumber(),
-                            dataFileGroup.getBuildId(),
-                            dataFileGroup.getVariantId(),
-                            groupKey,
-                            dataFile,
-                            deltaFile,
-                            downloadConditions,
-                            trafficTag,
-                            extraHttpHeaders),
+              // Check if a download is already in progress
+              if (sharedFile.getFileStatus() == FileStatus.DOWNLOAD_IN_PROGRESS) {
+                return PropagatedFutures.transformAsync(
+                    fileDownloader.getInProgressFuture(
+                        newFileKey.getChecksum(), downloadFileOnDeviceUri),
+                    inProgressFuture -> {
+                      if (inProgressFuture.isPresent()) {
+                        mayNotifyCurrentSizeOfPartiallyDownloadedFile(
+                            groupKey, downloadFileOnDeviceUri);
+                        return inProgressFuture.get();
+                      }
+                      return getDownloadFuture(
+                          newFileKey,
+                          downloadFileName,
+                          dataFileGroup.getFileGroupVersionNumber(),
+                          dataFileGroup.getBuildId(),
+                          dataFileGroup.getVariantId(),
+                          groupKey,
+                          dataFile,
+                          deltaFile,
+                          downloadConditions,
+                          trafficTag,
+                          extraHttpHeaders);
+                    },
                     sequentialControlExecutor);
-              },
-              sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+              }
+
+              // Download is not in progress, start it.
+              return getDownloadFuture(
+                  newFileKey,
+                  downloadFileName,
+                  dataFileGroup.getFileGroupVersionNumber(),
+                  dataFileGroup.getBuildId(),
+                  dataFileGroup.getVariantId(),
+                  groupKey,
+                  dataFile,
+                  deltaFile,
+                  downloadConditions,
+                  trafficTag,
+                  extraHttpHeaders);
+            },
+            sequentialControlExecutor)
+        .catchingAsync(
+            SharedFileMissingException.class,
+            ex -> {
+              // TODO(b/131166925): MDD dump should not use lite proto toString.
+              LogUtil.e(
+                  "%s: Start download called on file that doesn't exist. Key = %s!",
+                  TAG, newFileKey);
+              silentFeedback.send(ex, "Shared file not found in downloadFileGroup");
+              return immediateFailedFuture(
+                  DownloadException.builder()
+                      .setDownloadResultCode(DownloadResultCode.SHARED_FILE_NOT_FOUND_ERROR)
+                      .setCause(ex)
+                      .build());
+            },
+            sequentialControlExecutor);
   }
 
   private ListenableFuture<Void> getDownloadFuture(
-      SharedFile.Builder sharedFileBuilder,
       NewFileKey newFileKey,
       String downloadFileName,
       int fileGroupVersionNumber,
@@ -466,91 +532,114 @@ public class SharedFileManager {
       @Nullable DownloadConditions downloadConditions,
       int trafficTag,
       List<ExtraHttpHeader> extraHttpHeaders) {
-    ListenableFuture<Uri> downloadFileOnDeviceUriFuture =
-        getDownloadFileOnDeviceUri(
-            newFileKey.getAllowedReaders(), downloadFileName, dataFile.getChecksum());
-    return FluentFuture.from(downloadFileOnDeviceUriFuture)
-        .transformAsync(
-            unused -> {
-              sharedFileBuilder.setFileStatus(FileStatus.DOWNLOAD_IN_PROGRESS);
+    // It's possible to hit a race condition where the caller of this method sees the file as not
+    // downloaded and by the time this method is executed, the file is already downloaded.
+    //
+    // Check the shared file status before starting the download to confirm it is not downloaded and
+    // a download is not already in progress.
+    return PropagatedFutures.transformAsync(
+        getSharedFile(newFileKey),
+        latestSharedFile -> {
+          if (latestSharedFile.getFileStatus() == FileStatus.DOWNLOAD_COMPLETE) {
+            return immediateVoidFuture();
+          }
 
-              // Ignoring failure to write back here, as it will just result in one extra try to
-              // download the file.
-              return sharedFilesMetadata.write(newFileKey, sharedFileBuilder.build());
-            },
-            sequentialControlExecutor)
-        .transformAsync(
-            unused -> {
-              Uri downloadFileOnDeviceUri = Futures.getDone(downloadFileOnDeviceUriFuture);
-              ListenableFuture<Void> fileDownloadFuture;
-              if (!deltaDecoderOptional.isPresent() || deltaFile == null) {
-                // Download full file when delta file is null
-                DownloaderCallback downloaderCallback =
-                    new DownloaderCallbackImpl(
-                        sharedFilesMetadata,
-                        fileStorage,
-                        dataFile,
-                        newFileKey.getAllowedReaders(),
-                        eventLogger,
-                        groupKey,
-                        fileGroupVersionNumber,
-                        buildId,
-                        variantId,
-                        flags,
-                        sequentialControlExecutor);
+          // Download is not complete, proceed with starting the future.
+          SharedFile.Builder sharedFileBuilder = latestSharedFile.toBuilder();
+          ListenableFuture<Uri> downloadFileOnDeviceUriFuture =
+              getDownloadFileOnDeviceUri(
+                  newFileKey.getAllowedReaders(), downloadFileName, dataFile.getChecksum());
+          return PropagatedFluentFuture.from(downloadFileOnDeviceUriFuture)
+              .transformAsync(
+                  unused -> {
+                    sharedFileBuilder.setFileStatus(FileStatus.DOWNLOAD_IN_PROGRESS);
 
-                mayNotifyCurrentSizeOfPartiallyDownloadedFile(groupKey, downloadFileOnDeviceUri);
+                    // Ignoring failure to write back here, as it will just result in one
+                    // extra try
+                    // to download the file.
+                    return sharedFilesMetadata.write(newFileKey, sharedFileBuilder.build());
+                  },
+                  sequentialControlExecutor)
+              .transformAsync(
+                  unused -> {
+                    Uri downloadFileOnDeviceUri = getDone(downloadFileOnDeviceUriFuture);
+                    ListenableFuture<Void> fileDownloadFuture;
+                    if (!deltaDecoderOptional.isPresent() || deltaFile == null) {
+                      // Download full file when delta file is null
+                      DownloaderCallback downloaderCallback =
+                          new DownloaderCallbackImpl(
+                              sharedFilesMetadata,
+                              fileStorage,
+                              dataFile,
+                              newFileKey.getAllowedReaders(),
+                              eventLogger,
+                              groupKey,
+                              fileGroupVersionNumber,
+                              buildId,
+                              variantId,
+                              flags,
+                              sequentialControlExecutor);
 
-                fileDownloadFuture =
-                    fileDownloader.startDownloading(
-                        groupKey,
-                        fileGroupVersionNumber,
-                        buildId,
-                        downloadFileOnDeviceUri,
-                        dataFile.getUrlToDownload(),
-                        dataFile.getByteSize(),
-                        downloadConditions,
-                        downloaderCallback,
-                        trafficTag,
-                        extraHttpHeaders);
-              } else {
-                DownloaderCallback downloaderCallback =
-                    new DeltaFileDownloaderCallbackImpl(
-                        context,
-                        sharedFilesMetadata,
-                        fileStorage,
-                        silentFeedback,
-                        dataFile,
-                        newFileKey.getAllowedReaders(),
-                        deltaDecoderOptional.get(),
-                        deltaFile,
-                        eventLogger,
-                        groupKey,
-                        fileGroupVersionNumber,
-                        buildId,
-                        variantId,
-                        instanceId,
-                        flags,
-                        sequentialControlExecutor);
+                      mayNotifyCurrentSizeOfPartiallyDownloadedFile(
+                          groupKey, downloadFileOnDeviceUri);
 
-                mayNotifyCurrentSizeOfPartiallyDownloadedFile(groupKey, downloadFileOnDeviceUri);
+                      fileDownloadFuture =
+                          fileDownloader.startDownloading(
+                              newFileKey.getChecksum(),
+                              groupKey,
+                              fileGroupVersionNumber,
+                              buildId,
+                              variantId,
+                              downloadFileOnDeviceUri,
+                              dataFile.getUrlToDownload(),
+                              dataFile.getByteSize(),
+                              downloadConditions,
+                              downloaderCallback,
+                              trafficTag,
+                              extraHttpHeaders);
+                    } else {
+                      DownloaderCallback downloaderCallback =
+                          new DeltaFileDownloaderCallbackImpl(
+                              context,
+                              sharedFilesMetadata,
+                              fileStorage,
+                              silentFeedback,
+                              dataFile,
+                              newFileKey.getAllowedReaders(),
+                              deltaDecoderOptional.get(),
+                              deltaFile,
+                              eventLogger,
+                              groupKey,
+                              fileGroupVersionNumber,
+                              buildId,
+                              variantId,
+                              instanceId,
+                              flags,
+                              sequentialControlExecutor);
 
-                fileDownloadFuture =
-                    fileDownloader.startDownloading(
-                        groupKey,
-                        fileGroupVersionNumber,
-                        buildId,
-                        downloadFileOnDeviceUri,
-                        deltaFile.getUrlToDownload(),
-                        deltaFile.getByteSize(),
-                        downloadConditions,
-                        downloaderCallback,
-                        trafficTag,
-                        extraHttpHeaders);
-              }
-              return fileDownloadFuture;
-            },
-            sequentialControlExecutor);
+                      mayNotifyCurrentSizeOfPartiallyDownloadedFile(
+                          groupKey, downloadFileOnDeviceUri);
+
+                      fileDownloadFuture =
+                          fileDownloader.startDownloading(
+                              newFileKey.getChecksum(),
+                              groupKey,
+                              fileGroupVersionNumber,
+                              buildId,
+                              variantId,
+                              downloadFileOnDeviceUri,
+                              deltaFile.getUrlToDownload(),
+                              deltaFile.getByteSize(),
+                              downloadConditions,
+                              downloaderCallback,
+                              trafficTag,
+                              extraHttpHeaders);
+                    }
+                    return fileDownloadFuture;
+                  },
+                  sequentialControlExecutor);
+        },
+        sequentialControlExecutor);
   }
 
   /**
@@ -570,15 +659,15 @@ public class SharedFileManager {
             checksum,
             silentFeedback,
             instanceId,
-            /* androidShared = */ false);
+            /* androidShared= */ false);
     if (downloadFileOnDeviceUri == null) {
       LogUtil.e("%s: Failed to get file uri!", TAG);
-      return Futures.immediateFailedFuture(
+      return immediateFailedFuture(
           DownloadException.builder()
               .setDownloadResultCode(DownloadResultCode.UNABLE_TO_CREATE_FILE_URI_ERROR)
               .build());
     }
-    return Futures.immediateFuture(downloadFileOnDeviceUri);
+    return immediateFuture(downloadFileOnDeviceUri);
   }
 
   private void mayNotifyCurrentSizeOfPartiallyDownloadedFile(
@@ -599,10 +688,10 @@ public class SharedFileManager {
   }
 
   private ListenableFuture<DataFileGroupInternal> getDataFileGroupOrDefault(GroupKey groupKey) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         fileGroupsMetadata.read(groupKey),
         fileGroup ->
-            Futures.immediateFuture(
+            immediateFuture(
                 (fileGroup == null) ? DataFileGroupInternal.getDefaultInstance() : fileGroup),
         sequentialControlExecutor);
   }
@@ -621,10 +710,10 @@ public class SharedFileManager {
             < FileKeyVersion.USE_CHECKSUM_ONLY.value
         || !deltaDecoderOptional.isPresent()
         || deltaDecoderOptional.get().getDecoderName() == DiffDecoder.UNSPECIFIED) {
-      return Futures.immediateFuture(null);
+      return immediateFuture(null);
     }
     return findFirstDeltaFileWithBaseFileDownloaded(
-        dataFile.getDeltaFileList(), /* index = */ 0, allowedReaders);
+        dataFile.getDeltaFileList(), /* index= */ 0, allowedReaders);
   }
 
   // We must use recursion here since the decision to continue iterating is dependent on the result
@@ -632,7 +721,7 @@ public class SharedFileManager {
   private ListenableFuture<@NullableType DeltaFile> findFirstDeltaFileWithBaseFileDownloaded(
       List<DeltaFile> deltaFiles, int index, AllowedReaders allowedReaders) {
     if (index == deltaFiles.size()) {
-      return Futures.immediateFuture(null);
+      return immediateFuture(null);
     }
     DeltaFile deltaFile = deltaFiles.get(index);
     if (deltaFile.getDiffDecoder() != deltaDecoderOptional.get().getDecoderName()) {
@@ -643,7 +732,7 @@ public class SharedFileManager {
             .setChecksum(deltaFile.getBaseFile().getChecksum())
             .setAllowedReaders(allowedReaders)
             .build();
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.read(baseFileKey),
         baseFileMetadata -> {
           if (baseFileMetadata != null
@@ -656,9 +745,9 @@ public class SharedFileManager {
                     baseFileKey.getChecksum(),
                     silentFeedback,
                     instanceId,
-                    /* androidShared = */ false);
+                    /* androidShared= */ false);
             if (baseFileUri != null) {
-              return Futures.immediateFuture(deltaFile);
+              return immediateFuture(deltaFile);
             }
           }
           return findFirstDeltaFileWithBaseFileDownloaded(deltaFiles, index + 1, allowedReaders);
@@ -673,9 +762,9 @@ public class SharedFileManager {
    *     a SharedFileMissingException if the shared file metadata is missing.
    */
   ListenableFuture<FileStatus> getFileStatus(NewFileKey newFileKey) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         getSharedFile(newFileKey),
-        existingSharedFile -> Futures.immediateFuture(existingSharedFile.getFileStatus()),
+        existingSharedFile -> immediateFuture(existingSharedFile.getFileStatus()),
         sequentialControlExecutor);
   }
 
@@ -688,14 +777,14 @@ public class SharedFileManager {
    *     metadata is missing or the on disk file is corrupted.
    */
   ListenableFuture<Void> reVerifyFile(NewFileKey newFileKey, DataFile dataFile) {
-    return FluentFuture.from(getSharedFile(newFileKey))
+    return PropagatedFluentFuture.from(getSharedFile(newFileKey))
         .transformAsync(
             existingSharedFile -> {
               if (existingSharedFile.getFileStatus() != FileStatus.DOWNLOAD_COMPLETE) {
-                return Futures.immediateVoidFuture();
+                return immediateVoidFuture();
               }
               // Double check that it's really complete, and update status if it's not.
-              return FluentFuture.from(getOnDeviceUri(newFileKey))
+              return PropagatedFluentFuture.from(getOnDeviceUri(newFileKey))
                   .transformAsync(
                       uri -> {
                         if (uri == null) {
@@ -717,7 +806,7 @@ public class SharedFileManager {
                           FileValidator.validateDownloadedFile(
                               fileStorage, dataFile, uri, dataFile.getChecksum());
                         }
-                        return Futures.immediateVoidFuture();
+                        return immediateVoidFuture();
                       },
                       sequentialControlExecutor)
                   .catchingAsync(
@@ -730,7 +819,7 @@ public class SharedFileManager {
                             existingSharedFile.toBuilder()
                                 .setFileStatus(FileStatus.CORRUPTED)
                                 .build();
-                        return FluentFuture.from(
+                        return PropagatedFluentFuture.from(
                                 sharedFilesMetadata.write(newFileKey, updatedSharedFile))
                             .transformAsync(
                                 ok -> {
@@ -755,16 +844,16 @@ public class SharedFileManager {
    *     may throw a SharedFileMissingException if the shared file metadata is missing.
    */
   ListenableFuture<SharedFile> getSharedFile(NewFileKey newFileKey) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.read(newFileKey),
         existingSharedFile -> {
           if (existingSharedFile == null) {
             // TODO(b/131166925): MDD dump should not use lite proto toString.
             LogUtil.e(
-                "%s: getSharedFile called on file that doesn't exists! Key = %s", TAG, newFileKey);
-            return Futures.immediateFailedFuture(new SharedFileMissingException());
+                "%s: getSharedFile called on file that doesn't exist! Key = %s", TAG, newFileKey);
+            return immediateFailedFuture(new SharedFileMissingException());
           }
-          return Futures.immediateFuture(existingSharedFile);
+          return immediateFuture(existingSharedFile);
         },
         sequentialControlExecutor);
   }
@@ -803,7 +892,7 @@ public class SharedFileManager {
    */
   ListenableFuture<Boolean> updateMaxExpirationDateSecs(
       NewFileKey newFileKey, long fileExpirationDateSecs) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         getSharedFile(newFileKey),
         existingSharedFile -> {
           if (fileExpirationDateSecs > existingSharedFile.getMaxExpirationDateSecs()) {
@@ -813,7 +902,7 @@ public class SharedFileManager {
                     .build();
             return sharedFilesMetadata.write(newFileKey, updatedSharedFile);
           }
-          return Futures.immediateFuture(true);
+          return immediateFuture(true);
         },
         sequentialControlExecutor);
   }
@@ -827,29 +916,56 @@ public class SharedFileManager {
    *     is an error populating the uri of the file.
    */
   public ListenableFuture<@NullableType Uri> getOnDeviceUri(NewFileKey newFileKey) {
-    return Futures.transformAsync(
-        sharedFilesMetadata.read(newFileKey),
-        sharedFile -> {
-          if (sharedFile == null) {
-            // TODO(b/131166925): MDD dump should not use lite proto toString.
-            LogUtil.e(
-                "%s: getOnDeviceUri called on file that doesn't exists. Key = %s!",
-                TAG, newFileKey);
-            return Futures.immediateFailedFuture(new SharedFileMissingException());
-          }
+    return PropagatedFutures.transform(
+        getOnDeviceUris(ImmutableSet.of(newFileKey)),
+        uris -> uris.get(newFileKey),
+        directExecutor());
+  }
 
-          Uri onDeviceUri =
-              DirectoryUtil.getOnDeviceUri(
-                  context,
-                  newFileKey.getAllowedReaders(),
-                  sharedFile.getFileName(),
-                  sharedFile.getAndroidSharingChecksum(),
-                  silentFeedback,
-                  instanceId,
-                  sharedFile.getAndroidShared());
-          return Futures.immediateFuture(onDeviceUri);
-        },
-        sequentialControlExecutor);
+  /**
+   * Get the known on-device uris for a given list of {@link NewFileKey}s
+   *
+   * <p>The returned map may or may not have an entry for each NewFileKey on the list, depending on
+   * if it was possible to create the uri (see {@link DirectoryUtil#getOnDeviceUri()} for more
+   * details).
+   *
+   * <p>If any {@link NewFileKey} does not map to a {@link SharedFile}, the returned future will be
+   * a failure containing {@link SharedFileMissingException}.
+   */
+  ListenableFuture<ImmutableMap<NewFileKey, Uri>> getOnDeviceUris(
+      ImmutableSet<NewFileKey> newFileKeys) {
+    return PropagatedFluentFuture.from(sharedFilesMetadata.readAll(newFileKeys))
+        .transformAsync(
+            sharedFileMap -> {
+              ImmutableMap.Builder<NewFileKey, Uri> uriMapBuilder = ImmutableMap.builder();
+              for (NewFileKey newFileKey : newFileKeys) {
+                // Make sure all SharedFiles exist.
+                if (!sharedFileMap.containsKey(newFileKey)) {
+                  // TODO(b/131166925): MDD dump should not use lite proto toString.
+                  LogUtil.e(
+                      "%s: getOnDeviceUris called on file that doesn't exist. Key = %s!",
+                      TAG, newFileKey);
+                  return immediateFailedFuture(new SharedFileMissingException());
+                }
+
+                SharedFile sharedFile = sharedFileMap.get(newFileKey);
+
+                Uri onDeviceUri =
+                    DirectoryUtil.getOnDeviceUri(
+                        context,
+                        newFileKey.getAllowedReaders(),
+                        sharedFile.getFileName(),
+                        sharedFile.getAndroidSharingChecksum(),
+                        silentFeedback,
+                        instanceId,
+                        sharedFile.getAndroidShared());
+                if (onDeviceUri != null) {
+                  uriMapBuilder.put(newFileKey, onDeviceUri);
+                }
+              }
+              return immediateFuture(uriMapBuilder.buildKeepingLast());
+            },
+            sequentialControlExecutor);
   }
 
   /**
@@ -861,13 +977,13 @@ public class SharedFileManager {
    */
   // TODO - refactor to throw Exception when write to SharedPreferences fails
   ListenableFuture<Boolean> removeFileEntry(NewFileKey newFileKey) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.read(newFileKey),
         sharedFile -> {
           if (sharedFile == null) {
             // TODO(b/131166925): MDD dump should not use lite proto toString.
             LogUtil.e("%s: No file entry with key %s", TAG, newFileKey);
-            return Futures.immediateFuture(false);
+            return immediateFuture(false);
           }
 
           Uri onDeviceUri =
@@ -878,19 +994,19 @@ public class SharedFileManager {
                   newFileKey.getChecksum(),
                   silentFeedback,
                   instanceId,
-                  /* androidShared = */ false);
+                  /* androidShared= */ false);
           if (onDeviceUri != null) {
-            fileDownloader.stopDownloading(onDeviceUri);
+            fileDownloader.stopDownloading(newFileKey.getChecksum(), onDeviceUri);
           }
-          return Futures.transformAsync(
+          return PropagatedFutures.transformAsync(
               sharedFilesMetadata.remove(newFileKey),
               removeSuccess -> {
                 if (!removeSuccess) {
                   // TODO(b/131166925): MDD dump should not use lite proto toString.
                   LogUtil.e("%s: Unable to modify file subscription for key %s", TAG, newFileKey);
-                  return Futures.immediateFuture(false);
+                  return immediateFuture(false);
                 }
-                return Futures.immediateFuture(true);
+                return immediateFuture(true);
               },
               sequentialControlExecutor);
         },
@@ -901,6 +1017,7 @@ public class SharedFileManager {
    * Clears all storage used by the SharedFileManager and deletes all files that have been
    * downloaded to MDD's directory.
    */
+
   // TODO(b/124072754): Change to package private once all code is refactored.
   public ListenableFuture<Void> clear() {
     // If sdk is R+, try release all leases that the MDD Client may have acquired. This
@@ -913,14 +1030,14 @@ public class SharedFileManager {
     } catch (IOException e) {
       silentFeedback.send(e, "Failure while deleting mdd storage during clear");
     }
-    return Futures.immediateVoidFuture();
+    return immediateVoidFuture();
   }
 
   private void releaseAllAndroidSharedFiles() {
     try {
       Uri allLeasesUri = DirectoryUtil.getBlobStoreAllLeasesUri(context);
       fileStorage.deleteFile(allLeasesUri);
-      eventLogger.logEventSampled(0);
+      eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     } catch (UnsupportedFileStorageOperation e) {
       LogUtil.v(
           "%s: Failed to release the leases in the android shared storage."
@@ -928,12 +1045,12 @@ public class SharedFileManager {
           TAG);
     } catch (IOException e) {
       LogUtil.e(e, "%s: Failed to release the leases in the android shared storage", TAG);
-      eventLogger.logEventSampled(0);
+      eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
     }
   }
 
   public ListenableFuture<Void> cancelDownloadAndClear() {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.getAllFileKeys(),
         newFileKeyList -> {
           List<ListenableFuture<Void>> cancelDownloadFutures = new ArrayList<>();
@@ -947,19 +1064,19 @@ public class SharedFileManager {
           } catch (Exception e) {
             silentFeedback.send(e, "Failed to cancel all downloads during clear");
           }
-          return Futures.whenAllComplete(cancelDownloadFutures)
+          return PropagatedFutures.whenAllComplete(cancelDownloadFutures)
               .callAsync(this::clear, sequentialControlExecutor);
         },
         sequentialControlExecutor);
   }
 
   public ListenableFuture<Void> cancelDownload(NewFileKey newFileKey) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.read(newFileKey),
         sharedFile -> {
           if (sharedFile == null) {
             LogUtil.e("%s: Unable to read sharedFile from shared preferences.", TAG);
-            return Futures.immediateFailedFuture(new SharedFileMissingException());
+            return immediateFailedFuture(new SharedFileMissingException());
           }
           if (sharedFile.getFileStatus() != FileStatus.DOWNLOAD_COMPLETE) {
             Uri onDeviceUri =
@@ -970,9 +1087,19 @@ public class SharedFileManager {
                     newFileKey.getChecksum(),
                     silentFeedback,
                     instanceId,
-                    /* androidShared = */ false); // while downloading androidShared is always false
+                    /* androidShared= */ false); // while downloading androidShared is always false
             if (onDeviceUri != null) {
-              fileDownloader.stopDownloading(onDeviceUri);
+              fileDownloader.stopDownloading(newFileKey.getChecksum(), onDeviceUri);
+            }
+            // If the download was in progress, reset it back to subscribed, so it can be properly
+            // restarted.
+            if (sharedFile.getFileStatus() == FileStatus.DOWNLOAD_IN_PROGRESS) {
+              return PropagatedFutures.transformAsync(
+                  sharedFilesMetadata.write(
+                      newFileKey,
+                      sharedFile.toBuilder().setFileStatus(FileStatus.SUBSCRIBED).build()),
+                  unused -> immediateVoidFuture(),
+                  sequentialControlExecutor);
             }
           }
           return immediateVoidFuture();
@@ -983,22 +1110,22 @@ public class SharedFileManager {
   /** Dumps the current internal state of the SharedFileManager. */
   public ListenableFuture<Void> dump(final PrintWriter writer) {
     writer.println("==== MDD_SHARED_FILES ====");
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         sharedFilesMetadata.getAllFileKeys(),
         allFileKeys -> {
           ListenableFuture<Void> writeFilesFuture = immediateVoidFuture();
           for (NewFileKey newFileKey : allFileKeys) {
             writeFilesFuture =
-                Futures.transformAsync(
+                PropagatedFutures.transformAsync(
                     writeFilesFuture,
                     voidArg ->
-                        Futures.transformAsync(
+                        PropagatedFutures.transformAsync(
                             sharedFilesMetadata.read(newFileKey),
                             sharedFile -> {
                               if (sharedFile == null) {
                                 LogUtil.e(
                                     "%s: Unable to read sharedFile from shared preferences.", TAG);
-                                return Futures.immediateVoidFuture();
+                                return immediateVoidFuture();
                               }
                               // TODO(b/131166925): MDD dump should not use lite proto toString.
                               writer.format(
@@ -1017,14 +1144,14 @@ public class SharedFileManager {
                                         newFileKey.getChecksum(),
                                         silentFeedback,
                                         instanceId,
-                                        /* androidShared = */ false);
+                                        /* androidShared= */ false);
                                 if (serializedUri != null) {
                                   writer.format(
                                       "Checksum downloaded file: %s\n",
                                       FileValidator.computeSha1Digest(fileStorage, serializedUri));
                                 }
                               }
-                              return Futures.immediateVoidFuture();
+                              return immediateVoidFuture();
                             },
                             sequentialControlExecutor),
                     sequentialControlExecutor);

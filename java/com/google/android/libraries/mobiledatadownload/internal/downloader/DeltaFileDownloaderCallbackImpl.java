@@ -22,6 +22,12 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal.AllowedReaders;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile;
+import com.google.android.libraries.mdi.download.MetadataProto.FileStatus;
+import com.google.android.libraries.mdi.download.MetadataProto.GroupKey;
+import com.google.android.libraries.mdi.download.MetadataProto.NewFileKey;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.Flags;
@@ -38,12 +44,7 @@ import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures
 import com.google.common.base.Ascii;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
-import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
-import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 
@@ -210,7 +211,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
                     baseFileKey.getChecksum(),
                     silentFeedback,
                     instanceId,
-                    /* androidShared = */ false);
+                    /* androidShared= */ false);
           }
 
           if (baseFileUri == null) {
@@ -237,7 +238,14 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
                     .setCause(e)
                     .build());
           }
-          Void fileGroupStats = null;
+          DataDownloadFileGroupStats fileGroupStats =
+              DataDownloadFileGroupStats.newBuilder()
+                  .setFileGroupName(groupKey.getGroupName())
+                  .setFileGroupVersionNumber(fileGroupVersionNumber)
+                  .setOwnerPackage(groupKey.getOwnerPackage())
+                  .setBuildId(buildId)
+                  .setVariantId(variantId)
+                  .build();
           eventLogger.logMddNetworkSavings(
               fileGroupStats,
               0,

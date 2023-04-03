@@ -18,12 +18,12 @@ package com.google.android.libraries.mobiledatadownload.internal.util;
 import static com.google.android.libraries.mobiledatadownload.internal.MddConstants.SPLIT_CHAR;
 
 import android.content.Context;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal.AllowedReaders;
+import com.google.android.libraries.mdi.download.MetadataProto.NewFileKey;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.internal.Migrations;
 import com.google.common.base.Splitter;
 import com.google.mobiledatadownload.TransformProto.Transforms;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
-import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.List;
 
@@ -93,6 +93,8 @@ public final class SharedFilesMetadataUtil {
         .toString();
   }
 
+  // incompatible argument for parameter value of setAllowedReaders.
+  @SuppressWarnings("nullness:argument.type.incompatible")
   public static NewFileKey deserializeNewFileKey(
       String serializedFileKey, Context context, SilentFeedback silentFeedback)
       throws FileKeyDeserializationException {

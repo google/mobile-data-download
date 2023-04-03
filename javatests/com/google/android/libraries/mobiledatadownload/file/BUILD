@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -65,7 +66,6 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:buffer",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
-        "@androidx_test",
         "@com_google_guava_guava",
         "@mockito",
         "@truth",

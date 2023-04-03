@@ -1,0 +1,70 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+syntax = "proto2";
+
+package mobiledatadownload.logs;
+
+option java_multiple_files = true;
+option java_package = "com.google.mobiledatadownload";
+option java_outer_classname = "AtomsProto";
+
+/**
+ * These protos are duplicates of the MobileDataDownload protos logged as
+ * MODE_BYTES in <internal>.
+ * TODO(b/243579271): remove this duplication
+ */
+
+/** Shared data among MobileDataDownload statistics. Not meant to be a top level
+ * atom proto.*/
+message MobileDataDownloadFileGroupStats {
+  // The name of the file group. This a string set server side used to retrieve
+  // the files. Does not contain PII.
+  optional string file_group_name = 1;
+  // Allows the clients to identify a file group based on a given set of
+  // properties. This string is set server side and does not contain PII.
+  optional string variant_id = 2;
+  // Identifier for the data file group created to identify the version of the
+  // file group.
+  optional int64 build_id = 3;
+  // The number of files in the file group.
+  optional int32 file_count = 4;
+  // Whether the file group has an account associated with it.
+  optional bool has_account = 5;
+  // Inverse of the sampling rate used to sample this event.
+  optional int32 sampling_interval = 6;
+  // Note: we do not have owner_package since that's already transmitted.
+}
+
+/**
+ * Container for MobileDataDownloadFileGroupStorageStats
+ */
+message MobileDataDownloadStorageStats {
+  repeated MobileDataDownloadFileGroupStorageStats
+      mobile_data_download_file_group_storage_stats = 1;
+}
+
+/**
+ * Storage stats for a single file group. This is logged as a nested field and
+ * is not meant to be logged as a top level proto.
+ */
+message MobileDataDownloadFileGroupStorageStats {
+  // The total number of bytes used by this file group
+  optional int64 total_bytes_used = 1;
+  // The total number of inline file bytes used by this file group
+  optional int64 total_inline_bytes_used = 2;
+  // The number of bytes used for the downloaded version of the file group
+  optional int64 downloaded_group_bytes_used = 3;
+  // Specifies which file group this storage is associated with
+  optional MobileDataDownloadFileGroupStats file_group_stats = 4;
+}

@@ -28,12 +28,13 @@ import com.google.android.libraries.mobiledatadownload.file.common.MalformedUriE
 import com.google.android.libraries.mobiledatadownload.file.common.internal.Preconditions;
 import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
 import com.google.android.libraries.mobiledatadownload.file.spi.ForwardingBackend;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import com.google.errorprone.annotations.concurrent.GuardedBy;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import javax.annotation.Nullable;
-import javax.annotation.concurrent.GuardedBy;
 
 /** A backend that implements "android:" scheme using {@link JavaFileBackend}. */
 public final class AndroidFileBackend extends ForwardingBackend {
@@ -92,6 +93,7 @@ public final class AndroidFileBackend extends ForwardingBackend {
      * than your own. The only methods called on {@code remoteBackend} are {@link #openForRead} and
      * {@link #openForNativeRead}, though this may expand in the future. Defaults to {@code null}.
      */
+    @CanIgnoreReturnValue
     public Builder setRemoteBackend(Backend remoteBackend) {
       this.remoteBackend = remoteBackend;
       return this;
@@ -101,6 +103,7 @@ public final class AndroidFileBackend extends ForwardingBackend {
      * Sets the {@link AccountManager} invoked to resolve "managed" URIs. Defaults to {@code null},
      * in which case operations on "managed" URIs will fail.
      */
+    @CanIgnoreReturnValue
     public Builder setAccountManager(AccountManager accountManager) {
       this.accountManager = accountManager;
       return this;
@@ -111,6 +114,7 @@ public final class AndroidFileBackend extends ForwardingBackend {
      * injection is only necessary if there are multiple backend instances in the same process and
      * there's a risk of them acquiring a lock on the same underlying file.
      */
+    @CanIgnoreReturnValue
     public Builder setLockScope(LockScope lockScope) {
       Preconditions.checkArgument(
           backend == null,

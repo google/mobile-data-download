@@ -58,6 +58,7 @@ register_extension_info(
 _EMULATOR_IMAGES = [
     # Automotive
     "//tools/android/emulated_devices/automotive:auto_29_x86",
+    "//tools/android/emulated_devices/automotive:auto_30_x86",
 
     # Android Phone
     "//tools/android/emulated_devices/generic_phone:google_21_x86_gms_stable",
@@ -79,6 +80,23 @@ _COMMON_LOGCAT_ARGS = [
 # test binary, just like an `android_binary` rule does.
 # This is a workaround for b/111061456.
 _EMPTY_LOCAL_RESOURCE_FILES = []
+
+# Parameterized Integration Tests use TestParameterInjector (only supported at API level >= 24)
+# This list represents the emulator images that should be used rather than the default full list.
+PARAMETERIZED_EMULATOR_IMAGES = [
+    # Automotive
+    "//tools/android/emulated_devices/automotive:auto_29_x86",
+    "//tools/android/emulated_devices/automotive:auto_30_x86",
+
+    # Android Phone
+    "//tools/android/emulated_devices/generic_phone:google_24_x86_gms_stable",
+    "//tools/android/emulated_devices/generic_phone:google_25_x86_gms_stable",
+    "//tools/android/emulated_devices/generic_phone:google_26_x86_gms_stable",
+    "//tools/android/emulated_devices/generic_phone:google_27_x86_gms_stable",
+    "//tools/android/emulated_devices/generic_phone:google_28_x86_gms_stable",
+    "//tools/android/emulated_devices/generic_phone:google_29_x86_gms_stable",
+    "//tools/android/emulated_devices/generic_phone:google_30_x86_gms_stable",
+]
 
 # Wrapper around android_application_test to generate targets for multiple emulator images.
 def mdd_android_test(name, target_devices = _EMULATOR_IMAGES, **kwargs):
@@ -133,23 +151,23 @@ def mdd_android_test(name, target_devices = _EMULATOR_IMAGES, **kwargs):
             )
 
 # Wrapper around check_dependencies.
-def dependencies_test(name, allowlist = [], **kwargs):
+def dependencies_test(name, whitelist = [], **kwargs):
     """Generate a dependencies_test for MDD.
 
     Args:
       name: The test name.
-      allowlist: The excluded targets under the package.
+      whitelist: The excluded targets under the package.
       **kwargs: Any keyword arguments to be passed.
     """
     all_builds = []
     for r in native.existing_rules().values():
-        allowlisted = False
-        for build in allowlist:
+        whitelisted = False
+        for build in whitelist:
             # Ignore the leading colon in build.
             if build[1:] in r["name"]:
-                allowlisted = True
+                whitelisted = True
                 break
-        if not allowlisted:
+        if not whitelisted:
             all_builds.append(r["name"])
     check_dependencies(
         name = name,

@@ -18,11 +18,11 @@ package com.google.android.libraries.mobiledatadownload.internal.logging;
 import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 
+import com.google.android.libraries.mdi.download.MetadataProto.FileGroupLoggingState;
+import com.google.android.libraries.mdi.download.MetadataProto.SamplingInfo;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mobiledatadownload.internal.MetadataProto.FileGroupLoggingState;
-import com.google.mobiledatadownload.internal.MetadataProto.SamplingInfo;
 import java.util.List;
 
 /** LoggingStateStore that returns empty or void for all operations. */

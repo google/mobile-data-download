@@ -19,6 +19,7 @@ import android.net.Uri;
 import com.google.android.libraries.mobiledatadownload.file.Behavior;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.protobuf.MessageLite;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -43,6 +44,7 @@ public final class WriteProtoOpener implements Opener<Void> {
    * Supports adding options to writes. For example, SyncBehavior will force data to be flushed and
    * durably persisted.
    */
+  @CanIgnoreReturnValue
   public WriteProtoOpener withBehaviors(Behavior... behaviors) {
     this.behaviors = behaviors;
     return this;

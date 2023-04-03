@@ -16,13 +16,13 @@
 package com.google.android.libraries.mobiledatadownload.internal.downloader;
 
 import android.net.Uri;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.openers.ReadStreamOpener;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;

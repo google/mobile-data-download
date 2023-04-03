@@ -16,18 +16,18 @@
 package com.google.android.libraries.mobiledatadownload.internal;
 
 import android.content.Context;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile.ChecksumType;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal.AllowedReaders;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile.DiffDecoder;
+import com.google.android.libraries.mdi.download.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
 import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.file.transforms.TransformProtos;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
 import com.google.mobiledatadownload.TransformProto.Transforms;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile.ChecksumType;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile.DiffDecoder;
-import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
 
 /** DataFileGroupValidator - validates the passed in DataFileGroup */
 public class DataFileGroupValidator {

@@ -15,9 +15,9 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.experimentation;
 
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CheckReturnValue;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import java.util.Collection;
 
 /** Responsible for attaching external experiment ids to log sources. */

@@ -29,6 +29,7 @@ import com.google.android.libraries.mobiledatadownload.file.common.MalformedUriE
 import java.io.IOException;
 
 /** Utility class to create symlinks (if supported). */
+@RequiresApi(VERSION_CODES.LOLLIPOP)
 public final class SymlinkUtil {
   private SymlinkUtil() {}
 

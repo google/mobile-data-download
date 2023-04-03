@@ -17,10 +17,13 @@ package com.google.android.libraries.mobiledatadownload.internal;
 
 import static com.google.android.libraries.mobiledatadownload.internal.MddConstants.SPLIT_CHAR;
 import static com.google.android.libraries.mobiledatadownload.internal.util.SharedFilesMetadataUtil.MDD_SHARED_FILES;
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
 import android.content.Context;
 import android.content.SharedPreferences;
 import androidx.annotation.VisibleForTesting;
+import com.google.android.libraries.mdi.download.MetadataProto.NewFileKey;
+import com.google.android.libraries.mdi.download.MetadataProto.SharedFile;
 import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
@@ -29,13 +32,14 @@ import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedFilesMetadataUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedFilesMetadataUtil.FileKeyDeserializationException;
 import com.google.android.libraries.mobiledatadownload.internal.util.SharedPreferencesUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.base.Splitter;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CheckReturnValue;
-import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
-import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
@@ -252,15 +256,28 @@ public final class SharedPreferencesSharedFilesMetadata implements SharedFilesMe
   @SuppressWarnings("nullness")
   @Override
   public ListenableFuture<SharedFile> read(NewFileKey newFileKey) {
-    String serializedFileKey =
-        SharedFilesMetadataUtil.getSerializedFileKey(newFileKey, context, silentFeedback);
+    return PropagatedFutures.transform(
+        readAll(ImmutableSet.of(newFileKey)),
+        sharedFiles -> sharedFiles.get(newFileKey),
+        directExecutor());
+  }
 
+  @Override
+  public ListenableFuture<ImmutableMap<NewFileKey, SharedFile>> readAll(
+      ImmutableSet<NewFileKey> newFileKeys) {
     SharedPreferences prefs =
         SharedPreferencesUtil.getSharedPreferences(context, MDD_SHARED_FILES, instanceId);
-    SharedFile sharedFile =
-        SharedPreferencesUtil.readProto(prefs, serializedFileKey, SharedFile.parser());
-
-    return Futures.immediateFuture(sharedFile);
+    ImmutableMap.Builder<NewFileKey, SharedFile> sharedFileMapBuilder = ImmutableMap.builder();
+    for (NewFileKey newFileKey : newFileKeys) {
+      String serializedFileKey =
+          SharedFilesMetadataUtil.getSerializedFileKey(newFileKey, context, silentFeedback);
+      SharedFile sharedFile =
+          SharedPreferencesUtil.readProto(prefs, serializedFileKey, SharedFile.parser());
+      if (sharedFile != null) {
+        sharedFileMapBuilder.put(newFileKey, sharedFile);
+      }
+    }
+    return Futures.immediateFuture(sharedFileMapBuilder.buildKeepingLast());
   }
 
   @Override

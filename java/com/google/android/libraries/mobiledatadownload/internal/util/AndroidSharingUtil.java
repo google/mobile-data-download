@@ -18,6 +18,8 @@ package com.google.android.libraries.mobiledatadownload.internal.util;
 import android.content.Context;
 import android.net.Uri;
 import android.text.TextUtils;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.common.LimitExceededException;
 import com.google.android.libraries.mobiledatadownload.file.common.MalformedUriException;
@@ -26,8 +28,6 @@ import com.google.android.libraries.mobiledatadownload.file.openers.ReadStreamOp
 import com.google.android.libraries.mobiledatadownload.file.openers.WriteStreamOpener;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.common.io.ByteStreams;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;

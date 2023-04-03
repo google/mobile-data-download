@@ -19,13 +19,13 @@ import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
 import android.content.Context;
+import com.google.android.libraries.mdi.download.MetadataProto.FileGroupLoggingState;
 import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.internal.ApplicationContext;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mobiledatadownload.internal.MetadataProto.FileGroupLoggingState;
 import java.util.List;
 import javax.inject.Inject;
 

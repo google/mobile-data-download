@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -27,9 +28,11 @@ android_library(
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common:fragment",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:charsets",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
         "@androidx_appcompat_appcompat",  # buildcleaner: keep
+        "@com_google_code_findbugs_jsr305",
         "@com_google_guava_guava",
     ],
 )

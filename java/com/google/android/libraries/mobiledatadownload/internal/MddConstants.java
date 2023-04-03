@@ -58,4 +58,12 @@ public class MddConstants {
   public static final String SIDELOAD_FILE_URL_SCHEME = "file";
 
   public static final String EMBEDDED_ASSET_URL_SCHEME = "asset";
+
+  /**
+   * Currently used in getFileGroup logging. If a matching file group is not found, build_id and
+   * file_group_version_number are set to below values for logging.
+   */
+  public static final int FILE_GROUP_NOT_FOUND_BUILD_ID = -1;
+
+  public static final int FILE_GROUP_NOT_FOUND_FILE_GROUP_VERSION_NUMBER = -1;
 }

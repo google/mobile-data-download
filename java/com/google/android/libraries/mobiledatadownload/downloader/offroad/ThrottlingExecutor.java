@@ -18,10 +18,10 @@ package com.google.android.libraries.mobiledatadownload.downloader.offroad;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
+import com.google.errorprone.annotations.concurrent.GuardedBy;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.concurrent.Executor;
-import javax.annotation.concurrent.GuardedBy;
 
 /**
  * Passes tasks to a delegate {@link Executor} for execution, ensuring that no more than a fixed

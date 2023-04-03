@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -27,10 +28,11 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload:TimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/file/monitors",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "//java/com/google/android/libraries/mobiledatadownload/internal:AndroidTimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LoggingStateStore",
         "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
-        "//java/com/google/android/libraries/mobiledatadownload/tracing",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "@androidx_annotation_annotation",
         "@com_google_code_findbugs_jsr305",
         "@com_google_guava_guava",
@@ -45,11 +47,13 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload:TimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/file/monitors",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "//java/com/google/android/libraries/mobiledatadownload/internal:AndroidTimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
         "//java/com/google/android/libraries/mobiledatadownload/lite:DownloadListener",
         "//java/com/google/android/libraries/mobiledatadownload/lite:DownloadProgressMonitor",
         "@androidx_annotation_annotation",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )

@@ -15,13 +15,11 @@
  */
 package com.google.android.libraries.mobiledatadownload;
 
-/**
- * Interface through which the SystemClock can be read.
- *
- * <p>This interface is analogous to {@code com.google.common.time.TimeSource#now#toEpochMilli}
- * without the dependency on Java8.
- */
+/** Interface through which the SystemClock can be read. */
 public interface TimeSource {
   /** Returns the current system time in milliseconds since January 1, 1970 00:00:00 UTC. */
   long currentTimeMillis();
+
+  /** Returns nanoseconds since boot, including time spent in sleep. */
+  long elapsedRealtimeNanos();
 }

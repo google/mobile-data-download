@@ -23,8 +23,10 @@ import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.ManifestConfig;
 
@@ -56,6 +58,7 @@ public final class ManifestConfigFlagPopulator implements FileGroupPopulator {
     private Optional<ManifestConfigOverrider> overriderOptional = Optional.absent();
 
     /** Set the ManifestConfig supplier. */
+    @CanIgnoreReturnValue
     public Builder setManifestConfigSupplier(Supplier<ManifestConfig> manifestConfigSupplier) {
       this.manifestConfigSupplier = manifestConfigSupplier;
       return this;
@@ -65,6 +68,7 @@ public final class ManifestConfigFlagPopulator implements FileGroupPopulator {
      * Sets the optional Overrider that takes a {@link ManifestConfig} and returns a list of {@link
      * DataFileGroup} which will be added to MDD. The Overrider will enable the on device targeting.
      */
+    @CanIgnoreReturnValue
     public Builder setOverriderOptional(Optional<ManifestConfigOverrider> overriderOptional) {
       this.overriderOptional = overriderOptional;
       return this;
@@ -104,6 +108,10 @@ public final class ManifestConfigFlagPopulator implements FileGroupPopulator {
     LogUtil.d("%s: Add groups [%s] from ManifestConfig to MDD.", TAG, groups);
 
     return ManifestConfigHelper.refreshFromManifestConfig(
-        mobileDataDownload, manifestConfigSupplier.get(), overriderOptional);
+        mobileDataDownload,
+        manifestConfigSupplier.get(),
+        overriderOptional,
+        /* accounts= */ ImmutableList.of(),
+        /* addGroupsWithVariantId= */ false);
   }
 }

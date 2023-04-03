@@ -23,6 +23,7 @@ import com.google.android.libraries.mobiledatadownload.file.Opener;
 import com.google.android.libraries.mobiledatadownload.file.common.FileConvertible;
 import com.google.android.libraries.mobiledatadownload.file.common.ReleasableResource;
 import com.google.android.libraries.mobiledatadownload.file.common.UnsupportedFileStorageOperation;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -88,6 +89,7 @@ public final class ReadFileOpener implements Opener<File> {
    * @param context Android context for the root directory where fifos are stored.
    * @return This opener.
    */
+  @CanIgnoreReturnValue
   public ReadFileOpener withFallbackToPipeUsingExecutor(ExecutorService executor, Context context) {
     this.executor = executor;
     this.context = context;
@@ -99,6 +101,7 @@ public final class ReadFileOpener implements Opener<File> {
    * there are any transforms enabled. This is like the {@link UriAdapter} interface, but with more
    * guard rails to make it safe to expose publicly.
    */
+  @CanIgnoreReturnValue
   public ReadFileOpener withShortCircuit() {
     this.shortCircuit = true;
     return this;

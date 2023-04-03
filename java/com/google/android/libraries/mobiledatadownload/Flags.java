@@ -141,6 +141,7 @@ public interface Flags {
     return true;
   }
 
+  /** Controls whether daily maintenance includes {@link MobileDataDownload#collectGarbage}. */
   default boolean mddEnableGarbageCollection() {
     return true;
   }
@@ -184,10 +185,20 @@ public interface Flags {
   }
 
   default boolean enableRngBasedDeviceStableSampling() {
-    return false; // TODO(b/144684763): Switch to true after fully rolled out.
+    return true;
   }
 
-  // PeriodTaskFlags
+  /**
+   * Controls the key used for file download deduping.
+   *
+   * <p>By default, this flag is FALSE, so file download deduping is performed using the destination
+   * file uri. If this flag is enabled (TRUE), file download deduping will use NewFileKey.
+   */
+  default boolean enableFileDownloadDedupByFileKey() {
+    return false;
+  }
+
+  // PeriodicTaskFlags
   default long maintenanceGcmTaskPeriod() {
     return 86400;
   }

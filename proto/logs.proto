@@ -1,0 +1,271 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// Logging protos for MobileDataDownload
+
+syntax = "proto2";
+
+package mobiledatadownload.logs;
+
+import "proto/log_enums.proto";
+
+option jspb_use_correct_proto2_semantics = false;  // <internal>
+option java_package = "com.google.mobiledatadownload";
+option java_outer_classname = "LogProto";
+
+// Info about the Android client that logged.
+// Next tag: 3
+message AndroidClientInfo {
+  // Version of the module we are currently running. aMDD will log its own
+  // version that it shares between GMSCore module and library.
+
+  optional int32 module_version = 1 [default = -1];
+
+  // Package name of the hosting application.
+  // It is to differentiate logs from GMS service and library.
+  optional string host_package_name = 2;
+}
+
+// Attributes of the device and/or MDD
+// Recommended to log this message with each MDD log defined below. This will
+// allow slicing MDD stats on the state of the device.
+//
+// TODO: Make Fields of this proto available as RASTA conditions for
+// experimentation.
+//
+// Next tag: 3
+message MddDeviceInfo {
+  // Indicates low storage space condition on the device.
+  // Currently in O-, it is the result of Android's ACTION_DEVICE_STORAGE_LOW
+  // intent when the storage state was logged.
+  // For O+, MDD will define its own threshold for low storage: b/77856395
+  optional bool device_storage_low = 1;
+
+  reserved 2;
+}
+
+// Metadata associated with each data download event specific to a file group.
+//
+// Next tag: 9
+message DataDownloadFileGroupStats {
+  // Name of the file group.
+  optional string file_group_name = 1;
+
+  // Client set version number used to identify the file group.
+  // Note that this does not uniquely identify the contents of the file group.
+  // It simply reflects a snapshot of client config changes.
+  // For example: say there's a file group 'language-detector-model' that
+  // downloads a different file per user locale.
+  // data_file_group {
+  //   file_group_name = 'language-detector-model'
+  //   file_group_version_number = 1
+  //   file {
+  //      url = 'en-model'
+  //   }
+  //  }
+  // data_file_group {
+  //   file_group_name = 'language-detector-model'
+  //   file_group_version_number = 1
+  //   file {
+  //      url = 'es-model'
+  //   }
+  //  }
+  // Note that even though the actual contents of the file group are different
+  // for each locale, the version is the same because this config was pushed
+  // at the same snapshot.
+  optional int32 file_group_version_number = 2;
+
+  // The package name of the group owner.
+  optional string owner_package = 3;
+
+  // The total number of files in the file group.
+  //
+  // NOTE: This count is only included for storage and file group stats logging
+  optional int32 file_count = 4;
+
+  // The number of inline files in the file group.
+  //
+  // NOTE: This count is only included for storage and file group stats logging
+  optional int32 inline_file_count = 8;
+
+  // Whether the file group has an account associated with it or not. This will
+  // allow us to slice metrics by having account or not. For more info see
+  // <internal>
+  optional bool has_account = 5;
+
+  // The build id for the file group. Unique identifier for a file group config
+  // created when using MDD Ingress API.
+  // For more details see <internal>.
+  optional int64 build_id = 6;
+
+  // The VariantID of the DataFileGroup. This is set up server side via code
+  // review. For more details see <internal>.
+  // Examples: "en", "de-universal", etc.
+  optional string variant_id = 7;
+}
+
+// The status of a MDD file group. This data is logged periodically to get
+// a snapshot of the status of a file group on devices.
+// Next tag: 5
+message MddFileGroupStatus {
+  // Download status of the whole file group. This is an AND over the
+  // download status of each file within the file group.
+  optional MddFileGroupDownloadStatus.Code file_group_download_status = 1;
+
+  // Time since epoch when this file group was first added to mdd.
+  //
+  // Set to -1 if this time is unknown (for legacy groups).
+  //
+  // This matches the field "group_new_files_received_timestamp" in metadata
+  // <internal>
+  optional int64 group_added_timestamp_in_seconds = 2;
+
+  // Time since epoch when this file group was downloaded by mdd.
+  //
+  // Set to -1 if this time is unknown (for legacy groups) and non-downloaded
+  // groups
+  //
+  // This matches the field "group_downloaded_timestamp_in_millis" in metadata
+  // <internal>
+  optional int64 group_downloaded_timestamp_in_seconds = 3;
+
+  // Number of days since this status was last logged (number of days since
+  // daily maintenance was last run).
+  //
+  // Set to -1 if there is an invalid or unknown value.
+  //
+  // See <internal> for more info.
+  optional int32 days_since_last_log = 4;
+}
+
+// Various health reports.
+// Ideally, this should be defined as an empty message that allows extensions
+// and each inner proto should be defined as its extension.
+// TODO: Figure out if there are limitations in nano-proto that might
+// not allow this.
+//
+// Next tag: 74
+message MddLogData {
+  // MDD data download file group stats.
+  optional DataDownloadFileGroupStats data_download_file_group_stats = 10;
+
+  // Sampling interval used while logging this message. The default value 0 is
+  // not a valid value for messages using this filed since it a special value
+  // denoting that message should not be logged. Hence value of 0 means it was
+  // not filled in.
+  optional int64 sampling_interval = 21;
+
+  // Additional info necessary for stable sampling.
+  optional StableSamplingInfo stable_sampling_info = 72;
+
+  // Data download file group download status (logged periodically).
+  optional MddFileGroupStatus mdd_file_group_status = 32;
+
+  // Attributes of the device and/or MDD at the time we log other stats.
+  optional MddDeviceInfo device_info = 40;
+
+  // Android client info.
+  optional AndroidClientInfo android_client_info = 51;
+
+  optional MddStorageStats mdd_storage_stats = 46;
+
+  // MDD download result log.
+  optional MddDownloadResultLog mdd_download_result_log = 63;
+
+  reserved 1 to 9, 11 to 20, 22 to 31, 33 to 39, 41 to 45, 47 to 50, 52 to 62,
+      64 to 71, 73;
+}
+
+// Info on sampling method used for log events. Stable sampling means if a
+// device is selected to log, it will log all events. See <internal>
+// Next tag: 5
+message StableSamplingInfo {
+  // Whether a stable sampling method (as described in <internal>)
+  // was used.
+  optional bool stable_sampling_used = 1;
+
+  // When stable sampling was first enabled on the device. This will be useful
+  // when rolling out and processing logs over multiple days.
+  optional int64 stable_sampling_first_enabled_timestamp_ms = 2;
+
+  // Whether or not this device would log with the 1% cohort. Devices in the 1%
+  // cohort are *always* logging, and will always log without further code
+  // changes. When a device has this set to true, it's expected that the device
+  // is *always* logging and the sampling rate should not be changed to
+  // something that results in this device being excluded from the logging group
+  // (see invalid_sampling_rate_used).
+  //
+  // Most dashboards/metrics depending on linking together multiple events from
+  // the same device should filter to devices/events that have this set to true
+  // (with the caveat that we won't use all data from all devices reporting).
+  // This is useful when we need to change sampling rates, e.g. for an
+  // experiment.
+  optional bool part_of_always_logging_group = 3;
+
+  // If we are using stable sampling, we expect a sampling rate where  '100 %
+  // sample_interval == 0'. This ensures that devices logging at 1 percent
+  // sampling interval, will continue to log at other chosen sampling rates too.
+  // This should only be false if we've incorrectly configured our sampling
+  // rates (e.g. a sampling rate of 101 would mean that the 1 percent cohort
+  // devices would not log).
+  optional bool invalid_sampling_rate_used = 4;
+}
+
+// MDD download result log.
+message MddDownloadResultLog {
+  optional MddDownloadResult.Code result = 1;
+  // File group information.
+  optional DataDownloadFileGroupStats data_download_file_group_stats = 2;
+}
+
+// MDD Storage stats
+// Next tag 9
+message MddStorageStats {
+  repeated DataDownloadFileGroupStats data_download_file_group_stats = 1;
+
+  // NOTE: The four repeated fields total_bytes_used, total_inline_bytes_used,
+  // downloaded_group_bytes_used, and downloaded_group_inline_bytes_used have
+  // the same length and an element from all fields with the same index
+  // refers to the same file group.
+
+  // total_bytes_used[x] represents the total bytes used on disk by the
+  // file group index x.
+  repeated uint64 total_bytes_used = 2;
+
+  // total_inline_bytes_used[x] represents the total bytes used on disk by
+  // _inline_ files of file group index x.
+  repeated uint64 total_inline_bytes_used = 7 [packed = true];
+
+  // Similarly, the downloaded_group_bytes_used[x]
+  // represents the bytes used in the corresponding downloaded file group.
+  repeated uint64 downloaded_group_bytes_used = 3;
+
+  // Similarly, the downloaded_group_inline_bytes_used[x] represents the
+  // bytes of _inline_ files used in the corresponding downloaded file group.
+  repeated uint64 downloaded_group_inline_bytes_used = 8 [packed = true];
+
+  // Total bytes used by all MDD file groups.
+  // Measured by adding up file sizes for all files that are known to MDD.
+  optional uint64 total_mdd_bytes_used = 4;
+
+  // Total bytes used by MDD download directory.
+  optional uint64 total_mdd_directory_bytes_used = 5;
+
+  // Number of days since this status was last logged (number of days since
+  // daily maintenance was last run).
+  //
+  // Set to -1 if there is an invalid or unknown value.
+  //
+  // See <internal> for more info.
+  optional int32 days_since_last_log = 6;
+}

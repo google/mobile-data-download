@@ -18,13 +18,13 @@ package com.google.android.libraries.mobiledatadownload.internal.util;
 import android.content.Context;
 import android.net.Uri;
 import androidx.annotation.VisibleForTesting;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal.AllowedReaders;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidUri;
 import com.google.android.libraries.mobiledatadownload.file.backends.BlobUri;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
 import java.io.IOException;
 import javax.annotation.Nullable;
 
@@ -108,6 +108,7 @@ public class DirectoryUtil {
    *     URI, otherwise it returns the "android" scheme URI.
    */
   // TODO(b/118137672): getOnDeviceUri shouldn't return null on error.
+
   @Nullable
   public static Uri getOnDeviceUri(
       Context context,

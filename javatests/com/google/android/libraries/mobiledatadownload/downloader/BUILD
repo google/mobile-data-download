@@ -14,6 +14,7 @@
 load("//javatests/com/google/android/libraries/mobiledatadownload:test_defs.bzl", "mdd_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -25,8 +26,9 @@ mdd_local_test(
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/downloader:FileDownloader",
         "@android_sdk_linux",
-        "@androidx_test",
+        "@androidx_concurrent_concurrent",
         "@com_google_guava_guava",
+        "@junit",
         "@mockito",
         "@truth",
     ],
@@ -42,6 +44,7 @@ mdd_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/internal:MddConstants",
         "@androidx_test",
         "@com_google_protobuf//:protobuf_lite",
+        "@junit",
         "@truth",
     ],
 )

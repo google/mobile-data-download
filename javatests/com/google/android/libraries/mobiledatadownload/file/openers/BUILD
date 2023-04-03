@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_application_test", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -89,10 +90,15 @@ android_local_test(
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common:fragment",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing:matchers",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:native",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:proto",
+        "//java/com/google/testing/mockito",
         "@com_google_guava_guava",
         "@mockito",
         "@truth",
@@ -307,7 +313,34 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:recursive_delete",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:string",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "@androidx_test",
         "@mockito",
+        "@truth",
+    ],
+)
+
+android_application_test(
+    name = "RecursiveDeleteOpenerAndroidTest",
+    size = "large",
+    srcs = [
+        "RecursiveDeleteOpenerAndroidTest.java",
+    ],
+    manifest = "RecursiveDeleteOpenerAndroidManifest.xml",
+    target_devices = [
+        "//tools/android/emulated_devices/generic_phone:google_23_x86",
+    ],
+    deps = [
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:android_adapter",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:lock_file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:recursive_delete",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream_mutation",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:string",
+        "@androidx_test",
+        "@com_google_guava_guava",
+        "@junit",
         "@truth",
     ],
 )
@@ -325,6 +358,7 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:recursive_size",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:proto",
+        "@androidx_test",
         "@truth",
     ],
 )
@@ -450,12 +484,17 @@ android_local_test(
     ],
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
         "//java/com/google/android/libraries/mobiledatadownload/file/behaviors:syncing",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing:extras",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing:test_message_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:proto",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
+        "//java/com/google/android/libraries/mobiledatadownload/file/openers:string",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:compress",
+        "@androidx_test",
+        "@com_google_protobuf//:protobuf_lite",
         "@mockito",
         "@truth",
     ],

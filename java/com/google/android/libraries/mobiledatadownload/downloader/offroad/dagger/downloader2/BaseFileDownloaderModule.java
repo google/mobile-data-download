@@ -18,8 +18,8 @@ package com.google.android.libraries.mobiledatadownload.downloader.offroad.dagge
 import static com.google.common.util.concurrent.Futures.immediateFuture;
 
 import android.content.Context;
-import androidx.annotation.VisibleForTesting;
 import com.google.android.downloader.AndroidConnectivityHandler;
+import com.google.android.downloader.CookieJar;
 import com.google.android.downloader.Downloader;
 import com.google.android.downloader.Downloader.StateChangeCallback;
 import com.google.android.downloader.FloggerDownloaderLogger;
@@ -62,7 +62,6 @@ import javax.inject.Singleton;
       BaseOffroadFileDownloaderModule.class,
       BaseFileDownloaderDepsModule.class,
     })
-@VisibleForTesting
 public abstract class BaseFileDownloaderModule {
   @Provides
   @Singleton
@@ -78,6 +77,7 @@ public abstract class BaseFileDownloaderModule {
       Optional<Lazy<UrlEngine>> urlEngineOptional,
       Optional<Lazy<ExceptionHandler>> exceptionHandlerOptional,
       Optional<Lazy<OAuthTokenProvider>> authTokenProviderOptional,
+      Optional<Supplier<CookieJar>> cookieJarSupplierOptional,
       @SocketTrafficTag Optional<Integer> trafficTag,
       Flags flags) {
     return () ->
@@ -91,11 +91,19 @@ public abstract class BaseFileDownloaderModule {
             urlEngineOptional,
             exceptionHandlerOptional,
             authTokenProviderOptional,
+            cookieJarSupplierOptional,
             trafficTag,
             flags);
   }
 
-  @VisibleForTesting
+  /**
+   * Manual provider of Offroad2FileDownloader.
+   *
+   * <p>NOTE: This method should only be used when manually wiring up dependencies, such as when
+   * dagger/hilt are not available. If using dagger/hilt, this method is not needed. By registering
+   * this module in the dagger graph, the above @Provides method will automatically provide this
+   * dependency.
+   */
   public static Offroad2FileDownloader createOffroad2FileDownloader(
       Context context,
       ScheduledExecutorService downloadExecutor,
@@ -106,6 +114,7 @@ public abstract class BaseFileDownloaderModule {
       Optional<Lazy<UrlEngine>> urlEngineOptional,
       Optional<Lazy<ExceptionHandler>> exceptionHandlerOptional,
       Optional<Lazy<OAuthTokenProvider>> authTokenProviderOptional,
+      Optional<Supplier<CookieJar>> cookieJarSupplierOptional,
       Optional<Integer> trafficTag,
       Flags flags) {
     @Nullable
@@ -125,14 +134,15 @@ public abstract class BaseFileDownloaderModule {
       urlEngine =
           new PlatformUrlEngine(
               controlExecutor,
-              /* connectTimeoutMs = */ flags.timeToWaitForDownloader(),
-              /* readTimeoutMs = */ flags.timeToWaitForDownloader(),
+              /* connectTimeoutMs= */ flags.timeToWaitForDownloader(),
+              /* readTimeoutMs= */ flags.timeToWaitForDownloader(),
+              /* followHttpRedirects= */ true,
               new PlatformAndroidTrafficStatsTagger());
     }
 
     AndroidConnectivityHandler connectivityHandler =
         new AndroidConnectivityHandler(
-            context, downloadExecutor, /* timeoutMillis = */ flags.timeToWaitForDownloader());
+            context, downloadExecutor, /* timeoutMillis= */ flags.timeToWaitForDownloader());
 
     FloggerDownloaderLogger logger = new FloggerDownloaderLogger();
 
@@ -166,6 +176,7 @@ public abstract class BaseFileDownloaderModule {
         authTokenProvider,
         downloadMetadataStore,
         handler,
+        cookieJarSupplierOptional,
         trafficTag);
   }
 

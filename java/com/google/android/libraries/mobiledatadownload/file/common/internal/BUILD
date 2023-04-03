@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -76,4 +77,10 @@ android_library(
         "@com_google_code_findbugs_jsr305",
         "@com_google_guava_guava",
     ],
+)
+
+android_library(
+    name = "exponential_backoff_iterator",
+    srcs = ["ExponentialBackoffIterator.java"],
+    deps = ["@com_google_guava_guava"],
 )

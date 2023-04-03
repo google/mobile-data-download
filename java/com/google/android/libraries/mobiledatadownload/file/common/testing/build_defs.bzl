@@ -36,9 +36,11 @@ _DEFAULT_TARGET_APIS = [
 _GENERIC_DEVICE_FMT = "generic_phone:google_%s_x86_gms_stable"
 _EMULATOR_DIRECTORY = "//tools/android/emulated_devices/%s"
 
+# TODO: Consider adding the local test for additional target devices
 def android_test_multi_api(
         name,
         target_apis = _DEFAULT_TARGET_APIS,
+        additional_targets = {},
         **kwargs):
     """Simple definition for running an android_application_test against multiple API levels.
 
@@ -56,6 +58,8 @@ def android_test_multi_api(
       name: Name of the "default" test target and used to derive subtargets
       target_apis: List of Android API levels as strings for which a test should
                    be generated. If unspecified, 16-28 excluding 20 are used.
+      additional_targets: Map of additional target devices other than automatically generated ones,
+                   with keys as target device names and values as emulator directory.
       **kwargs: Parameters that are passed to the generated android_application_test rule.
     """
 
@@ -67,6 +71,7 @@ def android_test_multi_api(
     android_test_multi_device(
         name = name,
         target_devices = target_devices,
+        additional_targets_map = additional_targets,
         **kwargs
     )
 
@@ -84,6 +89,7 @@ def android_test_multi_api(
 def android_test_multi_device(
         name,
         target_devices,
+        additional_targets_map,
         **kwargs):
     """Simple definition for running an android_application_test against multiple devices.
 
@@ -91,14 +97,35 @@ def android_test_multi_device(
       name: Name of the test rule; we generate several sub-targets based on API.
       target_devices: List of emulators as strings for which a test should be
                       generated.
+      additional_targets_map: Map of additional target devices other than automatically generated
+                      ones, with keys as target device names and values as emulator directory.
       **kwargs: Parameters that are passed to the generated android_application_test rule.
     """
     for target_device in target_devices:
-        sanitized_device = target_device.replace(":", "_")  # ":" is invalid
-        test_name = "%s_%s" % (name, sanitized_device)
-        test_device = _EMULATOR_DIRECTORY % (target_device)
-        android_application_test(
-            name = test_name,
-            target_devices = [test_device],
-            **kwargs
-        )
+        android_test_single_device(name, target_device, _EMULATOR_DIRECTORY, **kwargs)
+    for additional_target, emulator_dir in additional_targets_map.items():
+        if not emulator_dir.endswith("%s"):
+            emulator_dir += "%s"
+        android_test_single_device(name, additional_target, emulator_dir, **kwargs)
+
+def android_test_single_device(
+        name,
+        target_device,
+        emulator_directory,
+        **kwargs):
+    """Simple definition for running an android_application_test against single device.
+
+    Args:
+      name: Name of the test rule; we generate several sub-targets based on API.
+      target_device: An emulator as a string for which a test should be generated.
+      emulator_directory: A string representing the diretory where the emulator locates at.
+      **kwargs: Parameters that are passed to the generated android_application_test rule.
+    """
+    sanitized_device = target_device.replace(":", "_")  # ":" is invalid
+    test_name = "%s_%s" % (name, sanitized_device)
+    test_device = emulator_directory % (target_device)
+    android_application_test(
+        name = test_name,
+        target_devices = [test_device],
+        **kwargs
+    )

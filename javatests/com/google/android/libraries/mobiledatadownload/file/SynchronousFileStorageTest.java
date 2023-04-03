@@ -110,7 +110,7 @@ public class SynchronousFileStorageTest extends FileStorageTestBase {
             return "";
           }
         };
-    new SynchronousFileStorage(ImmutableList.of(emptyNameBackend));
+    var unused = new SynchronousFileStorage(ImmutableList.of(emptyNameBackend));
   }
 
   @Test
@@ -278,7 +278,8 @@ public class SynchronousFileStorageTest extends FileStorageTestBase {
             return "";
           }
         };
-    new SynchronousFileStorage(ImmutableList.of(), ImmutableList.of(emptyNameTransform));
+    var unused =
+        new SynchronousFileStorage(ImmutableList.of(), ImmutableList.of(emptyNameTransform));
   }
 
   @Test

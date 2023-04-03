@@ -18,6 +18,7 @@ package com.google.android.libraries.mobiledatadownload.file.openers;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
 import com.google.android.libraries.mobiledatadownload.file.common.internal.Charsets;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.IOException;
 import java.nio.charset.Charset;
 
@@ -31,6 +32,7 @@ public final class ReadStringOpener implements Opener<String> {
     return new ReadStringOpener();
   }
 
+  @CanIgnoreReturnValue
   public ReadStringOpener withCharset(Charset charset) {
     this.charset = charset;
     return this;

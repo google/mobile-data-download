@@ -15,16 +15,19 @@
  */
 package com.google.android.libraries.mobiledatadownload;
 
+import static com.google.android.libraries.mobiledatadownload.testing.MddTestDependencies.ExecutorType;
 import static com.google.common.truth.Truth.assertThat;
 import static java.util.concurrent.TimeUnit.DAYS;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import android.app.blob.BlobStoreManager;
 import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 import androidx.test.core.app.ApplicationProvider;
-import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.libraries.mobiledatadownload.downloader.FileDownloader;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
@@ -46,6 +49,11 @@ import com.google.mobiledatadownload.ClientConfigProto.ClientFile;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions.DeviceNetworkPolicy;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
+import com.google.mobiledatadownload.LogProto.MddLogData;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import org.junit.After;
@@ -53,11 +61,12 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-@RunWith(AndroidJUnit4.class)
+@RunWith(TestParameterInjector.class)
 public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
   private static final String TAG = "MddGarbageCollectionWithAndroidSharingIntegrationTest";
   private static final int MAX_DOWNLOAD_FILE_GROUP_WAIT_TIME_SECS = 300;
@@ -65,9 +74,6 @@ public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
   private static final String TEST_DATA_RELATIVE_PATH =
       "third_party/java_src/android_libs/mobiledatadownload/javatests/com/google/android/libraries/mobiledatadownload/testdata/";
 
-  // Note: Control Executor must not be a single thread executor.
-  private static final ListeningExecutorService CONTROL_EXECUTOR =
-      MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
   private static final ScheduledExecutorService DOWNLOAD_EXECUTOR =
       Executors.newScheduledThreadPool(2);
 
@@ -87,19 +93,39 @@ public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
   @Mock private Logger mockLogger;
 
   private SynchronousFileStorage fileStorage;
+
   private BlobStoreManager blobStoreManager;
   private MobileDataDownload mobileDataDownload;
+  private Supplier<FileDownloader> fileDownloaderSupplier;
+  private ListeningExecutorService controlExecutor;
 
   private final TestFlags flags = new TestFlags();
 
-  @Rule public final MockitoRule mocks = MockitoJUnit.rule();
+  @Rule(order = 1)
+  public final MockitoRule mocks = MockitoJUnit.rule();
+
+  @TestParameter ExecutorType controlExecutorType;
 
   @Before
   public void setUp() throws Exception {
+
+    // cl/439051122 created a temporary FALSE override targeted to ASGA devices. This test suite
+    // relies on garbage collection being enabled to test the metadata state transistions, but
+    // all_on testing doesn't respect diversion criteria in the launch.
+    //
+    // So we temporarily force it on to bypass the launch so the tests can rely on expected
+    // behavior.
+    // TODO(b/226551373): remove these overrides once AsgaDisableMddLibGcLaunch is turned down
+    flags.mddEnableGarbageCollection = Optional.of(true);
+
     flags.mddAndroidSharingSampleInterval = Optional.of(1);
+
     flags.mddDefaultSampleInterval = Optional.of(1);
+
     BlobStoreBackend blobStoreBackend = new BlobStoreBackend(context);
     blobStoreManager = (BlobStoreManager) context.getSystemService(Context.BLOB_STORE_SERVICE);
+
+    controlExecutor = controlExecutorType.executor();
 
     fileStorage =
         new SynchronousFileStorage(
@@ -109,26 +135,13 @@ public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
                 new JavaFileBackend()),
             /* transforms= */ ImmutableList.of(new CompressTransform()),
             /* monitors= */ ImmutableList.of(mockNetworkUsageMonitor, mockDownloadProgressMonitor));
-    Supplier<FileDownloader> fileDownloaderSupplier =
+
+    fileDownloaderSupplier =
         () ->
             new TestFileDownloader(
                 TEST_DATA_RELATIVE_PATH,
                 fileStorage,
                 MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
-
-    mobileDataDownload =
-        MobileDataDownloadBuilder.newBuilder()
-            .setContext(context)
-            .setControlExecutor(CONTROL_EXECUTOR)
-            .setFileDownloaderSupplier(fileDownloaderSupplier)
-            .setTaskScheduler(Optional.of(mockTaskScheduler))
-            .setDeltaDecoderOptional(Optional.absent())
-            .setFileStorage(fileStorage)
-            .setNetworkUsageMonitor(mockNetworkUsageMonitor)
-            .setDownloadMonitorOptional(Optional.of(mockDownloadProgressMonitor))
-            .setLoggerOptional(Optional.of(mockLogger))
-            .setFlagsOptional(Optional.of(flags))
-            .build();
   }
 
   @After
@@ -182,6 +195,7 @@ public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
 
   @Test
   public void deletesStaleGroups_staleLifetimeZero() throws Exception {
+    mobileDataDownload = builderForTest().build();
     Uri androidUri =
         BlobUri.builder(context).setBlobParameters(FILE_ANDROID_SHARING_CHECKSUM_1).build();
     assertThat(fileStorage.exists(androidUri)).isFalse();
@@ -234,10 +248,46 @@ public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
     assertThat(blobStoreManager.getLeasedBlobs()).isEmpty();
 
     // Verify logging events.
+
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1050 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1050));
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(1);
+
+    DataDownloadFileGroupStats dataDownloadFileGroupStats =
+        logData.get(0).getDataDownloadFileGroupStats();
+    DataDownloadFileGroupStats staleGroupExpired =
+        DataDownloadFileGroupStats.newBuilder()
+            .setFileGroupName(fileGroup.getGroupName())
+            .setFileGroupVersionNumber(fileGroup.getFileGroupVersionNumber())
+            .setBuildId(0)
+            .setVariantId("")
+            .build();
+    assertThat(dataDownloadFileGroupStats).isEqualTo(staleGroupExpired);
+
+    logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1084 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED;
+    // Called once for every released lease.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1084));
+
+    logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1051 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    // It's logged once by mobileDataDownload.maintenance() and three times in the
+    // ExpirationHandler, once when the file metadata is deleted, once when the lease is released
+    // and once when the temporary local copy of the shared file is deleted.
+    verify(mockLogger, times(4)).log(logDataCaptor.capture(), /* eventCode= */ eq(1051));
+    logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(4);
+
+    Void metadafileDeleted = null;
+    Void fileReleased = null;
+    Void fileDeleted = null;
   }
 
   @Test
   public void deletesStaleGroups_staleLifetimeTwoDays() throws Exception {
+    mobileDataDownload = builderForTest().build();
     Uri androidUri =
         BlobUri.builder(context).setBlobParameters(FILE_ANDROID_SHARING_CHECKSUM_1).build();
     assertThat(fileStorage.exists(androidUri)).isFalse();
@@ -299,10 +349,46 @@ public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
     assertThat(blobStoreManager.getLeasedBlobs()).isEmpty();
 
     // Verify logging events.
+
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1050 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1050));
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(1);
+
+    DataDownloadFileGroupStats dataDownloadFileGroupStats =
+        logData.get(0).getDataDownloadFileGroupStats();
+    DataDownloadFileGroupStats staleGroupExpired =
+        DataDownloadFileGroupStats.newBuilder()
+            .setFileGroupName(fileGroup.getGroupName())
+            .setFileGroupVersionNumber(fileGroup.getFileGroupVersionNumber())
+            .setBuildId(0)
+            .setVariantId("")
+            .build();
+    assertThat(dataDownloadFileGroupStats).isEqualTo(staleGroupExpired);
+
+    logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1084 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED;
+    // Called once for every released lease.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1084));
+
+    logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1051 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    // It's logged once every time mobileDataDownload.maintenance() is called and three times in the
+    // ExpirationHandler, once when the file metadata is deleted, once when the lease is released
+    // and once when the temporary local copy of the shared file is deleted.
+    verify(mockLogger, times(5)).log(logDataCaptor.capture(), /* eventCode= */ eq(1051));
+    logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(5);
+
+    Void metadafileDeleted = null;
+    Void fileReleased = null;
+    Void fileDeleted = null;
   }
 
   @Test
   public void deletesExpiredGroups() throws Exception {
+    mobileDataDownload = builderForTest().build();
     Uri androidUri =
         BlobUri.builder(context).setBlobParameters(FILE_ANDROID_SHARING_CHECKSUM_1).build();
     assertThat(fileStorage.exists(androidUri)).isFalse();
@@ -357,5 +443,58 @@ public final class MddGarbageCollectionWithAndroidSharingIntegrationTest {
 
     // Verify logging events.
 
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1049 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1049));
+
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(1);
+
+    DataDownloadFileGroupStats dataDownloadFileGroupStats =
+        logData.get(0).getDataDownloadFileGroupStats();
+    DataDownloadFileGroupStats groupExpired =
+        DataDownloadFileGroupStats.newBuilder()
+            .setFileGroupName(fileGroup.getGroupName())
+            .setFileGroupVersionNumber(fileGroup.getFileGroupVersionNumber())
+            .setBuildId(0)
+            .setVariantId("")
+            .build();
+    assertThat(dataDownloadFileGroupStats).isEqualTo(groupExpired);
+
+    logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1084 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED;
+    // Called once for every released lease.
+    verify(mockLogger).log(logDataCaptor.capture(), /* eventCode= */ eq(1084));
+
+    logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1051 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    // It's logged once every time mobileDataDownload.maintenance() is called and three times in the
+    // ExpirationHandler, once when the file metadata is deleted, once when the lease is
+    // released and once when the temporary local copy of the shared file is deleted.
+    verify(mockLogger, times(5)).log(logDataCaptor.capture(), /* eventCode= */ eq(1051));
+    logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(5);
+
+    Void metadafileDeleted = null;
+    Void fileReleased = null;
+    Void fileDeleted = null;
+  }
+
+  /**
+   * Returns MDD Builder with common dependencies set -- additional dependencies are added in each
+   * test as needed.
+   */
+  private MobileDataDownloadBuilder builderForTest() {
+    return MobileDataDownloadBuilder.newBuilder()
+        .setContext(context)
+        .setControlExecutor(controlExecutor)
+        .setFileDownloaderSupplier(fileDownloaderSupplier)
+        .setTaskScheduler(Optional.of(mockTaskScheduler))
+        .setDeltaDecoderOptional(Optional.absent())
+        .setFileStorage(fileStorage)
+        .setNetworkUsageMonitor(mockNetworkUsageMonitor)
+        .setDownloadMonitorOptional(Optional.of(mockDownloadProgressMonitor))
+        .setLoggerOptional(Optional.of(mockLogger))
+        .setFlagsOptional(Optional.of(flags));
   }
 }

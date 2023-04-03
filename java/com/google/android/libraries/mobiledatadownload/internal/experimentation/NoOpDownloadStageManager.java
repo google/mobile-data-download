@@ -17,9 +17,9 @@ package com.google.android.libraries.mobiledatadownload.internal.experimentation
 
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CheckReturnValue;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import java.util.Collection;
 
 /** Implementation of DownloadStageManager that does nothing. */

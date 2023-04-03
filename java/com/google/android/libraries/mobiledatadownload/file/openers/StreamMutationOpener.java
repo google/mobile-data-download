@@ -19,6 +19,7 @@ import android.net.Uri;
 import com.google.android.libraries.mobiledatadownload.file.Behavior;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.FileNotFoundException;
@@ -68,12 +69,14 @@ public final class StreamMutationOpener implements Opener<StreamMutationOpener.M
    * Enable exclusive locking with this opener. This is useful if multiple processes or threads need
    * to maintain transactional isolation.
    */
+  @CanIgnoreReturnValue
   public StreamMutationOpener withLocking(LockFileOpener locking) {
     this.locking = locking;
     return this;
   }
 
   /** Apply these behaviors while writing only. */
+  @CanIgnoreReturnValue
   public StreamMutationOpener withBehaviors(Behavior... behaviors) {
     this.behaviors = behaviors;
     return this;

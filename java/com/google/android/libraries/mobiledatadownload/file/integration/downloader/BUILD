@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -30,6 +31,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:random_access_file",
+        "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
         "@com_google_guava_guava",
         "@downloader",
     ],

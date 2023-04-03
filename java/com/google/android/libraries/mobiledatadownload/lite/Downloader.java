@@ -22,6 +22,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.CheckReturnValue;
 import java.util.concurrent.Executor;
 
@@ -73,8 +74,19 @@ public interface Downloader {
   @CheckReturnValue
   ListenableFuture<Void> downloadWithForegroundService(DownloadRequest downloadRequest);
 
-  /** Cancel an on-going foreground download. */
-  void cancelForegroundDownload(String destinationFileUri);
+  /**
+   * Cancel an on-going foreground download.
+   *
+   * <p>Use {@link ForegroundDownloadKey} to construct the unique key.
+   *
+   * <p><b>NOTE:</b> In most cases, clients will not need to call this -- it is meant to allow the
+   * ForegroundDownloadService to cancel a download via the Cancel action registered to a
+   * notification.
+   *
+   * <p>Clients should prefer to cancel the future returned to them from {@link
+   * #downloadWithForegroundService} instead.
+   */
+  void cancelForegroundDownload(String downloadKey);
 
   static Downloader.Builder newBuilder() {
     return new Downloader.Builder();
@@ -91,12 +103,14 @@ public interface Downloader {
     private Optional<SingleFileDownloadProgressMonitor> downloadMonitorOptional = Optional.absent();
     private Optional<Class<?>> foregroundDownloadServiceClassOptional = Optional.absent();
 
+    @CanIgnoreReturnValue
     public Builder setContext(Context context) {
       this.context = context.getApplicationContext();
       return this;
     }
 
     /** Set the Control Executor which will run MDDLite control flow. */
+    @CanIgnoreReturnValue
     public Builder setControlExecutor(Executor controlExecutor) {
       Preconditions.checkNotNull(controlExecutor);
       // Executor that will execute tasks sequentially.
@@ -115,6 +129,7 @@ public interface Downloader {
      * DownloadListener} to {@link Downloader#download}. The DownloadListener's {@code onFailure}
      * and {@code onComplete} will be invoked regardless of whether this is set.
      */
+    @CanIgnoreReturnValue
     public Builder setDownloadMonitor(SingleFileDownloadProgressMonitor downloadMonitor) {
       this.downloadMonitorOptional = Optional.of(downloadMonitor);
       return this;
@@ -127,6 +142,7 @@ public interface Downloader {
      * <p>This is required to use {@link Downloader#downloadWithForegroundService}. Not providing
      * this will result in a failed future when calling downloadWithForegroundService.
      */
+    @CanIgnoreReturnValue
     public Builder setForegroundDownloadService(Class<?> foregroundDownloadServiceClass) {
       this.foregroundDownloadServiceClassOptional = Optional.of(foregroundDownloadServiceClass);
       return this;
@@ -136,6 +152,7 @@ public interface Downloader {
      * Set the FileDownloader Supplier. MDDLite takes in a Supplier of FileDownload to support lazy
      * instantiation of the FileDownloader
      */
+    @CanIgnoreReturnValue
     public Builder setFileDownloaderSupplier(Supplier<FileDownloader> fileDownloaderSupplier) {
       this.fileDownloaderSupplier = fileDownloaderSupplier;
       return this;

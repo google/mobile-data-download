@@ -30,9 +30,15 @@
   </string>
 
   <!-- Notification title that is shown for every file that is currently
-    downloading but is temporary paused due to network connection. [CHAR_LIMIT=80] -->
+    downloading but is temporary paused due to missing any network connection. [CHAR_LIMIT=80] -->
   <string name="mdd_notification_download_paused">
     Waiting for network connection
+  </string>
+
+  <!-- Notification title that is shown for every file that is currently
+    downloading but is temporary paused due to missing wifi network connection. [CHAR_LIMIT=80] -->
+  <string name="mdd_notification_download_paused_wifi">
+    Waiting for WiFi connection
   </string>
 
   <!-- Notification title that is shown for every file that was successfully

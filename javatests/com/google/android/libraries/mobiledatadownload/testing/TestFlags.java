@@ -61,6 +61,7 @@ public final class TestFlags implements Flags {
   public Optional<Boolean> enableDownloadStageExperimentIdPropagation = Optional.absent();
   public Optional<Boolean> enableIsolatedStructureVerification = Optional.absent();
   public Optional<Boolean> enableRngBasedDeviceStableSampling = Optional.absent();
+  public Optional<Boolean> enableFileDownloadDedupByFileKey = Optional.absent();
   public Optional<Long> maintenanceGcmTaskPeriod = Optional.absent();
   public Optional<Long> chargingGcmTaskPeriod = Optional.absent();
   public Optional<Long> cellularChargingGcmTaskPeriod = Optional.absent();
@@ -288,6 +289,11 @@ public final class TestFlags implements Flags {
   @Override
   public boolean enableRngBasedDeviceStableSampling() {
     return enableRngBasedDeviceStableSampling.or(delegate.enableRngBasedDeviceStableSampling());
+  }
+
+  @Override
+  public boolean enableFileDownloadDedupByFileKey() {
+    return enableFileDownloadDedupByFileKey.or(delegate.enableRngBasedDeviceStableSampling());
   }
 
   @Override

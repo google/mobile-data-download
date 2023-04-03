@@ -14,6 +14,7 @@
 load("//tools/build_rules/text_to_binary:def.bzl", "proto_data")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )

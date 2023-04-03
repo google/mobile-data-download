@@ -16,7 +16,7 @@
 package com.google.android.libraries.mobiledatadownload.delta;
 
 import android.net.Uri;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile.DiffDecoder;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile.DiffDecoder;
 import java.io.IOException;
 
 /**

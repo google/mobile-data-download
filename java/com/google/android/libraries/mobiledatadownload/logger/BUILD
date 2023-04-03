@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -27,5 +28,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload:Flags",
         "//java/com/google/android/libraries/mobiledatadownload:Logger",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LogUtil",
+        "//proto:log_enums_java_proto_lite",
+        "//proto:logs_java_proto_lite",
     ],
 )

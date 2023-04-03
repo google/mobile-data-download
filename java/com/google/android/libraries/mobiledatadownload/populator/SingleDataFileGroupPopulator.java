@@ -15,17 +15,20 @@
  */
 package com.google.android.libraries.mobiledatadownload.populator;
 
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+
 import android.util.Log;
 import com.google.android.libraries.mobiledatadownload.AddFileGroupRequest;
 import com.google.android.libraries.mobiledatadownload.FileGroupPopulator;
 import com.google.android.libraries.mobiledatadownload.MobileDataDownload;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 
 /**
@@ -46,6 +49,7 @@ public final class SingleDataFileGroupPopulator implements FileGroupPopulator {
     private Supplier<DataFileGroup> dataFileGroupSupplier;
     private Optional<DataFileGroupOverrider> overriderOptional = Optional.absent();
 
+    @CanIgnoreReturnValue
     public Builder setDataFileGroupSupplier(Supplier<DataFileGroup> dataFileGroupSupplier) {
       this.dataFileGroupSupplier = dataFileGroupSupplier;
       return this;
@@ -56,6 +60,7 @@ public final class SingleDataFileGroupPopulator implements FileGroupPopulator {
      * {@link DataFileGroup} after being overridden. If the overrider returns a null data file
      * group, nothing will be populated.
      */
+    @CanIgnoreReturnValue
     public Builder setOverriderOptional(Optional<DataFileGroupOverrider> overriderOptional) {
       this.overriderOptional = overriderOptional;
       return this;
@@ -86,17 +91,17 @@ public final class SingleDataFileGroupPopulator implements FileGroupPopulator {
     // Override data file group if the overrider is present. If the overrider returns an absent
     // data file group, nothing will be populated.
     ListenableFuture<Optional<DataFileGroup>> dataFileGroupOptionalFuture =
-        Futures.immediateFuture(Optional.absent());
+        immediateFuture(Optional.absent());
     if (dataFileGroupSupplier.get() != null
         && !dataFileGroupSupplier.get().getGroupName().isEmpty()) {
       dataFileGroupOptionalFuture =
           overriderOptional.isPresent()
               ? overriderOptional.get().override(dataFileGroupSupplier.get())
-              : Futures.immediateFuture(Optional.of(dataFileGroupSupplier.get()));
+              : immediateFuture(Optional.of(dataFileGroupSupplier.get()));
     }
 
     ListenableFuture<Boolean> addFileGroupFuture =
-        Futures.transformAsync(
+        PropagatedFutures.transformAsync(
             dataFileGroupOptionalFuture,
             dataFileGroupOptional -> {
               if (dataFileGroupOptional.isPresent()
@@ -107,11 +112,11 @@ public final class SingleDataFileGroupPopulator implements FileGroupPopulator {
                         .build());
               }
               LogUtil.d("%s: Not adding file group because of overrider.", TAG);
-              return Futures.immediateFuture(false);
+              return immediateFuture(false);
             },
             MoreExecutors.directExecutor());
 
-    Futures.addCallback(
+    PropagatedFutures.addCallback(
         addFileGroupFuture,
         new FutureCallback<Boolean>() {
           @Override
@@ -131,7 +136,7 @@ public final class SingleDataFileGroupPopulator implements FileGroupPopulator {
         },
         MoreExecutors.directExecutor());
 
-    return Futures.whenAllComplete(addFileGroupFuture)
+    return PropagatedFutures.whenAllComplete(addFileGroupFuture)
         .call(() -> null, MoreExecutors.directExecutor());
   }
 }

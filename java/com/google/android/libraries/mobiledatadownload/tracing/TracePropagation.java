@@ -61,5 +61,10 @@ public final class TracePropagation {
     return closingFunction;
   }
 
+  @CheckReturnValue
+  public static Runnable propagateRunnable(Runnable runnable) {
+    return runnable;
+  }
+
   private TracePropagation() {}
 }

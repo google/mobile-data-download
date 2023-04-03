@@ -41,7 +41,7 @@ message ExtraHttpHeader {
 // The tag number of extra fields should start from 1000 to reserve room for
 // growing DataFileGroup.
 //
-// Next id: 1000
+// Next id: 1001
 message DataFileGroupInternal {
   // Extra information that is kept on disk.
   //
@@ -198,6 +198,15 @@ message DataFileGroupInternal {
   repeated string locale = 25;
 
   reserved 28;
+
+  // If a group enables preserve_filenames_and_isolate_files
+  // this property will contain the directory root of the isolated
+  // structure. Specifically, the property will be a string created from the
+  // group name and a hash of other identifying properties (account, variantid,
+  // buildid).
+  //
+  // currently only used in aMDD.
+  optional string isolated_directory_root = 1000;
 
   reserved 4, 5, 7, 8, 9, 15, 18, 22, 24;
 }
@@ -507,8 +516,23 @@ message GroupKey {
   // Whether or not all files in a fileGroup have been downloaded.
   optional bool downloaded = 4;
 
-  // The variant id of the group. A null or empty value indicates that the group
-  // does not have an associated variant.
+  // The variant id of the group for identification purposes.
+  //
+  // This is used to ensure that groups with different variants can have
+  // different entries in MDD metadata, and therefore have different lifecycles.
+  //
+  // Note that clients can choose to opt-in to a SINGLE_VARIANT flow where
+  // different variants replace each other on-device (only single variant can
+  // exist on a device at a time). In this case, an empty variant_id is set here
+  // so groups with different variants share the same GroupKey and are subject
+  // to the same lifecycle, even though the DataFileGroup does have a non-empty
+  // variant_id.
+  //
+  // Because of the SINGLE_VARIANT flow and because groups may still be added
+  // with no variant_id associated, using this property to tell if the
+  // associated file group has a variant_id is unreliable. Instead, the
+  // variant_id set within a DataFileGroup should be used as the source of truth
+  // about the group (such as when logging).
   optional string variant_id = 6;
 
   reserved 3;
@@ -651,11 +675,26 @@ message LoggingState {
 // This proto is used to store state for logging that is specific to a File
 // Group. This includes network usage logging and maybe download tiers (for
 // <internal>).
+//
+// NEXT TAG: 7
 message FileGroupLoggingState {
+  // GroupKey associated with a file group -- this is used to populate the group
+  // name and host package name.
   optional GroupKey group_key = 1;
+
+  // The build_id associated with the file group.
   optional int64 build_id = 2;
+
+  // The variant_id associated with the file group.
+  optional string variant_id = 6;
+
+  // The file group version number associated with the file group.
   optional int32 file_group_version_number = 3;
+
+  // The number of bytes downloaded over a cellular (metered) network.
   optional int64 cellular_usage = 4;
+
+  // The number of bytes downloaded over a wifi (unmetered) network.
   optional int64 wifi_usage = 5;
 }
 

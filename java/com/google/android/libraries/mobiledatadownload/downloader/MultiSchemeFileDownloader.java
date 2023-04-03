@@ -24,6 +24,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.CheckReturnValue;
 import java.net.MalformedURLException;
 import java.util.HashMap;
@@ -41,6 +42,7 @@ public final class MultiSchemeFileDownloader implements FileDownloader {
     private final Map<String, FileDownloader> schemeToDownloader = new HashMap<>();
 
     /** Associates a url scheme (e.g. "http") with a specific {@link FileDownloader} delegate. */
+    @CanIgnoreReturnValue
     public MultiSchemeFileDownloader.Builder addScheme(String scheme, FileDownloader downloader) {
       schemeToDownloader.put(
           Preconditions.checkNotNull(scheme), Preconditions.checkNotNull(downloader));

@@ -266,7 +266,7 @@ public abstract class BackendTestBase {
     try (OutputStream stream = backend().openForAppend(uri)) {
       assertThat(stream).isInstanceOf(FileConvertible.class);
       File file = ((FileConvertible) stream).toFile();
-      writeFileToSink(new FileOutputStream(file, /* append = */ true), TEST_CONTENT);
+      writeFileToSink(new FileOutputStream(file, /* append= */ true), TEST_CONTENT);
     }
     assertThat(readFileInBytes(storage(), uri))
         .isEqualTo(Bytes.concat(OTHER_CONTENT, TEST_CONTENT));

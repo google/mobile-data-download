@@ -175,7 +175,7 @@ public final class AggregateException extends Exception {
 
   @VisibleForTesting
   static String throwableToString(Throwable failure) {
-    return throwableToString(failure, /*depth=*/ 1);
+    return throwableToString(failure, /* depth= */ 1);
   }
 
   private static String throwableToString(Throwable failure, int depth) {

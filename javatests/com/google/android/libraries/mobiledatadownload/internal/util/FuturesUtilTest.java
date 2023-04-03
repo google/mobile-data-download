@@ -30,9 +30,9 @@ import java.util.concurrent.Executors;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
+import org.robolectric.RobolectricTestRunner;
 
-@RunWith(JUnit4.class)
+@RunWith(RobolectricTestRunner.class)
 public final class FuturesUtilTest {
 
   private static final Executor SEQUENTIAL_EXECUTOR =

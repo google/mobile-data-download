@@ -20,6 +20,7 @@ import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
 import com.google.android.libraries.mobiledatadownload.file.spi.Monitor;
 import com.google.android.libraries.mobiledatadownload.file.spi.Transform;
 import com.google.common.collect.Iterables;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -51,31 +52,37 @@ public final class OpenContext {
 
     private Builder() {}
 
+    @CanIgnoreReturnValue
     Builder setStorage(SynchronousFileStorage storage) {
       this.storage = storage;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setBackend(Backend backend) {
       this.backend = backend;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setTransforms(List<Transform> transforms) {
       this.transforms = transforms;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setMonitors(List<Monitor> monitors) {
       this.monitors = monitors;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setEncodedUri(Uri encodedUri) {
       this.encodedUri = encodedUri;
       return this;
     }
 
+    @CanIgnoreReturnValue
     Builder setOriginalUri(Uri originalUri) {
       this.originalUri = originalUri;
       return this;

@@ -68,11 +68,6 @@ public final class TestFileDownloader implements FileDownloader {
       LogUtil.e("%s: Invalid urlToDownload %s", TAG, urlToDownload);
       return immediateVoidFuture();
     }
-    if (uriToDownload.getPath().endsWith("odws1_empty.jar")) {
-      // TODO(b/222519077): this is necessary to adapt the real file URL to local testdata
-      uriToDownload =
-          Uri.parse(uriToDownload.getPath().substring(0, uriToDownload.getPath().length() - 4));
-    }
 
     String testDataUrl =
         FileUri.builder()

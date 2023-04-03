@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -65,6 +66,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:charsets",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:lite_transform_fragments",
         "//proto:transform_java_proto_lite",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )

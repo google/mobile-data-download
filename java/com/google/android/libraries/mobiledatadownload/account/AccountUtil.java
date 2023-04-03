@@ -41,7 +41,11 @@ public final class AccountUtil {
     return new Account(name, type);
   }
 
-  /** Serializes an {@link Account} into a string. */
+  /**
+   * Serializes an {@link Account} into a string.
+   *
+   * <p>TODO(b/222110940): make this function consistent with deserialize.
+   */
   public static String serialize(Account account) {
     return account.type + ACCOUNT_DELIMITER + account.name;
   }
@@ -49,10 +53,14 @@ public final class AccountUtil {
   /**
    * Deserializes a string into an {@link Account}.
    *
-   * @return The account parsed from string. Returns null if there is any error during parse.
+   * @return The account parsed from string. Returns null if the accountStr is empty or if there is
+   *     any error during parse.
    */
   @Nullable
   public static Account deserialize(String accountStr) {
+    if (accountStr.isEmpty()) {
+      return null;
+    }
     int splitIndex = accountStr.indexOf(ACCOUNT_DELIMITER);
     if (splitIndex < 0) {
       LogUtil.e("%s: Unable to parse Account with string = '%s'", TAG, accountStr);

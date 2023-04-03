@@ -15,10 +15,10 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.logging;
 
+import com.google.android.libraries.mdi.download.MetadataProto.FileGroupLoggingState;
+import com.google.android.libraries.mdi.download.MetadataProto.SamplingInfo;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mobiledatadownload.internal.MetadataProto.FileGroupLoggingState;
-import com.google.mobiledatadownload.internal.MetadataProto.SamplingInfo;
 import java.util.List;
 
 /** Interface for keeping track of state necessary for accurate logging. */

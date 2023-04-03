@@ -15,6 +15,7 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.dagger;
 
+import com.google.android.libraries.mobiledatadownload.TimeSource;
 import com.google.android.libraries.mobiledatadownload.internal.MobileDataDownloadManager;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LoggingStateStore;
@@ -38,4 +39,6 @@ public abstract class StandaloneComponent {
 
   // TODO(b/214632773): remove this when event logger can be constructed internally
   public abstract LoggingStateStore getLoggingStateStore();
+
+  public abstract TimeSource getTimeSource();
 }

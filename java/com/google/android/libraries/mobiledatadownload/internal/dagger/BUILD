@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -60,17 +61,20 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload:TimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/annotations",
         "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/internal:AndroidTimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/internal:ApplicationContext",
         "//java/com/google/android/libraries/mobiledatadownload/internal:FileGroupsMetadata",
         "//java/com/google/android/libraries/mobiledatadownload/internal:SharedFilesMetadata",
         "//java/com/google/android/libraries/mobiledatadownload/internal:SharedPreferencesFileGroupsMetadata",
         "//java/com/google/android/libraries/mobiledatadownload/internal:SharedPreferencesSharedFilesMetadata",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/annotations",
         "//java/com/google/android/libraries/mobiledatadownload/internal/annotations:SequentialControlExecutor",
         "//java/com/google/android/libraries/mobiledatadownload/internal/experimentation:DownloadStageManager",
         "//java/com/google/android/libraries/mobiledatadownload/internal/experimentation:NoOpDownloadStageManager",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:EventLogger",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LoggingStateStore",
-        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:NoOpLoggingState",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:SharedPreferencesLoggingState",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/internal/util:FuturesUtil",
         "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
         "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
@@ -90,6 +94,7 @@ android_library(
         ":DownloaderModule",
         ":ExecutorsModule",
         ":MainMddLibModule",
+        "//java/com/google/android/libraries/mobiledatadownload:TimeSource",
         "//java/com/google/android/libraries/mobiledatadownload/internal:MobileDataDownloadManager",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:EventLogger",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LoggingStateStore",

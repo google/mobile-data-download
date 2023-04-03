@@ -18,6 +18,7 @@ package com.google.android.libraries.mobiledatadownload.file.openers;
 import com.google.android.libraries.mobiledatadownload.file.Behavior;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
@@ -37,6 +38,7 @@ public final class AppendStreamOpener implements Opener<OutputStream> {
    * Supports adding options to writes. For example, SyncBehavior will force data to be flushed and
    * durably persisted.
    */
+  @CanIgnoreReturnValue
   public AppendStreamOpener withBehaviors(Behavior... behaviors) {
     this.behaviors = behaviors;
     return this;

@@ -15,11 +15,11 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal;
 
-import android.util.Pair;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal;
+import com.google.android.libraries.mdi.download.MetadataProto.GroupKey;
+import com.google.android.libraries.mdi.download.MetadataProto.GroupKeyProperties;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKeyProperties;
 import java.util.List;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 
@@ -71,7 +71,7 @@ public interface FileGroupsMetadata {
    * @return A future resolving to a list containing pairs of serialized GroupKeys and the
    *     corresponding DataFileGroups.
    */
-  ListenableFuture<List<Pair<GroupKey, DataFileGroupInternal>>> getAllFreshGroups();
+  ListenableFuture<List<GroupKeyAndGroup>> getAllFreshGroups();
 
   /**
    * Removes all entries with a key in keys from the SharedPreferencesFileGroupsMetadata's storage.

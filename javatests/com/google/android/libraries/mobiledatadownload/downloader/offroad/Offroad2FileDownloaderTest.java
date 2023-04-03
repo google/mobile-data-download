@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// TODO
 package com.google.android.libraries.mobiledatadownload.downloader.offroad;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -28,6 +27,7 @@ import android.net.Uri;
 import android.util.Pair;
 import androidx.test.core.app.ApplicationProvider;
 import com.google.android.downloader.ConnectivityHandler;
+import com.google.android.downloader.CookieJar;
 import com.google.android.downloader.DownloadConstraints;
 import com.google.android.downloader.DownloadConstraints.NetworkType;
 import com.google.android.downloader.DownloadMetadata;
@@ -35,6 +35,7 @@ import com.google.android.downloader.Downloader;
 import com.google.android.downloader.FloggerDownloaderLogger;
 import com.google.android.downloader.OAuthTokenProvider;
 import com.google.android.downloader.PlatformUrlEngine;
+import com.google.android.downloader.contrib.InMemoryCookieJar;
 import com.google.android.downloader.testing.TestUrlEngine;
 import com.google.android.downloader.testing.TestUrlEngine.TestUrlRequest;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
@@ -118,21 +119,23 @@ public class Offroad2FileDownloaderTest {
   private FakeOAuthTokenProvider fakeOAuthTokenProvider;
   private FakeTrafficStatsTagger fakeTrafficStatsTagger;
   private TestUrlEngine testUrlEngine;
+  private CookieJar cookieJar;
   private Downloader downloader;
 
   private Offroad2FileDownloader fileDownloader;
 
-  @Rule public TemporaryUri tmpUri = new TemporaryUri();
+  @Rule(order = 1)
+  public TemporaryUri tmpUri = new TemporaryUri();
 
   @Before
   public void setUp() throws Exception {
     context = ApplicationProvider.getApplicationContext();
     fileStorage =
         new SynchronousFileStorage(
-            /* backends = */ ImmutableList.of(
+            /* backends= */ ImmutableList.of(
                 AndroidFileBackend.builder(context).build(), new JavaFileBackend()),
-            /* transforms = */ ImmutableList.of(),
-            /* monitors = */ ImmutableList.of());
+            /* transforms= */ ImmutableList.of(),
+            /* monitors= */ ImmutableList.of());
 
     fakeDownloadMetadataStore = new FakeDownloadMetadataStore();
 
@@ -143,6 +146,7 @@ public class Offroad2FileDownloaderTest {
             CONTROL_EXECUTOR,
             MAX_PLATFORM_ENGINE_TIMEOUT_MILLIS,
             MAX_PLATFORM_ENGINE_TIMEOUT_MILLIS,
+            /* followHttpRedirects= */ false,
             fakeTrafficStatsTagger);
 
     testUrlEngine = new TestUrlEngine(urlEngine);
@@ -160,6 +164,8 @@ public class Offroad2FileDownloaderTest {
 
     fakeOAuthTokenProvider = new FakeOAuthTokenProvider();
 
+    cookieJar = new InMemoryCookieJar();
+
     fileDownloader =
         new Offroad2FileDownloader(
             downloader,
@@ -168,6 +174,7 @@ public class Offroad2FileDownloaderTest {
             fakeOAuthTokenProvider,
             fakeDownloadMetadataStore,
             ExceptionHandler.withDefaultHandling(),
+            Optional.of(() -> cookieJar),
             Optional.absent());
 
     testHttpServer = new TestHttpServer();
@@ -175,7 +182,7 @@ public class Offroad2FileDownloaderTest {
   }
 
   @After
-  public void tearDown() {
+  public void tearDown() throws Exception {
     testHttpServer.stopServer();
     fakeConnectivityHandler.reset();
     fakeDownloadMetadataStore.reset();

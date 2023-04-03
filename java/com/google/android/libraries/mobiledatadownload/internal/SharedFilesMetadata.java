@@ -16,14 +16,16 @@
 package com.google.android.libraries.mobiledatadownload.internal;
 
 import android.content.Context;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFile;
+import com.google.android.libraries.mdi.download.MetadataProto.DataFileGroupInternal.AllowedReaders;
+import com.google.android.libraries.mdi.download.MetadataProto.DeltaFile;
+import com.google.android.libraries.mdi.download.MetadataProto.NewFileKey;
+import com.google.android.libraries.mdi.download.MetadataProto.SharedFile;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
-import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
-import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
-import com.google.mobiledatadownload.internal.MetadataProto.SharedFile;
 import java.util.List;
 
 /** Stores and provides access to shared file metadata. */
@@ -124,6 +126,14 @@ public interface SharedFilesMetadata {
 
   /** Return {@link SharedFile} associated with the given key. */
   public ListenableFuture<SharedFile> read(NewFileKey newFileKey);
+
+  /**
+   * Returns all known {@link SharedFile}s for the given set of {@link NewFileKey}s
+   *
+   * <p>The map will contain a SharedFile entry if it exists.
+   */
+  public ListenableFuture<ImmutableMap<NewFileKey, SharedFile>> readAll(
+      ImmutableSet<NewFileKey> newFileKeys);
 
   /**
    * Map the key "newFileKey" to the value "sharedFile". Returns a future resolving to true if the

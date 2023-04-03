@@ -31,6 +31,7 @@ import androidx.test.core.app.ApplicationProvider;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.downloader.DownloadConstraints;
 import com.google.android.libraries.mobiledatadownload.downloader.FileDownloader;
+import com.google.android.libraries.mobiledatadownload.foreground.ForegroundDownloadKey;
 import com.google.android.libraries.mobiledatadownload.testing.BlockingFileDownloader;
 import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
@@ -76,6 +77,7 @@ public final class DownloaderImplTest {
   private Downloader downloader;
   private Context context;
   private DownloadRequest downloadRequest;
+  private ForegroundDownloadKey foregroundDownloadKey;
   private final Uri destinationFileUri =
       Uri.parse(
           "android://com.google.android.libraries.mobiledatadownload/files/datadownload/shared/public/file_1");
@@ -108,6 +110,8 @@ public final class DownloaderImplTest {
             .setNotificationContentTitle("File url: " + FILE_URL)
             .build();
 
+    foregroundDownloadKey = ForegroundDownloadKey.ofSingleFile(destinationFileUri);
+
     when(mockDownloadListener.onComplete()).thenReturn(Futures.immediateFuture(null));
   }
 
@@ -126,13 +130,13 @@ public final class DownloaderImplTest {
             Optional.of(mockDownloadMonitor),
             blockingDownloaderSupplier);
 
-    int downloadFuturesInFlightCountBefore = downloaderImpl.keyToListenableFuture.size();
+    int downloadFuturesInFlightCountBefore = getInProgressFuturesCount(downloaderImpl);
 
     ListenableFuture<Void> downloadFuture1 = downloaderImpl.download(downloadRequest);
     ListenableFuture<Void> downloadFuture2 = downloaderImpl.download(downloadRequest);
 
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture.size() - downloadFuturesInFlightCountBefore)
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
+    assertThat(getInProgressFuturesCount(downloaderImpl) - downloadFuturesInFlightCountBefore)
         .isEqualTo(1);
 
     // Allow blocking download to finish
@@ -144,12 +148,13 @@ public final class DownloaderImplTest {
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
-    // The completed download should be removed from keyToListenableFuture map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).hasSize(downloadFuturesInFlightCountBefore);
+    // The completed download should be removed from downloadFutureMap map.
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl))
+        .isEqualTo(downloadFuturesInFlightCountBefore);
 
     // Reset state of blockingFileDownloader to prevent deadlocks
     blockingFileDownloader.resetState();
@@ -170,14 +175,14 @@ public final class DownloaderImplTest {
             Optional.of(mockDownloadMonitor),
             blockingDownloaderSupplier);
 
-    int downloadFuturesInFlightCountBefore = downloaderImpl.keyToListenableFuture.size();
+    int downloadFuturesInFlightCountBefore = getInProgressFuturesCount(downloaderImpl);
 
     ListenableFuture<Void> downloadFuture1 =
         downloaderImpl.downloadWithForegroundService(downloadRequest);
     ListenableFuture<Void> downloadFuture2 = downloaderImpl.download(downloadRequest);
 
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture.size() - downloadFuturesInFlightCountBefore)
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
+    assertThat(getInProgressFuturesCount(downloaderImpl) - downloadFuturesInFlightCountBefore)
         .isEqualTo(1);
 
     // Allow blocking download to finish
@@ -189,12 +194,13 @@ public final class DownloaderImplTest {
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
-    // The completed download should be removed from keyToListenableFuture map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).hasSize(downloadFuturesInFlightCountBefore);
+    // The completed download should be removed from downloadFutureMap map.
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl))
+        .isEqualTo(downloadFuturesInFlightCountBefore);
 
     // Reset state of blockingFileDownloader to prevent deadlocks
     blockingFileDownloader.resetState();
@@ -226,7 +232,7 @@ public final class DownloaderImplTest {
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // Verify that correct DownloadRequest is sent to underlying FileDownloader
     com.google.android.libraries.mobiledatadownload.downloader.DownloadRequest
@@ -287,11 +293,10 @@ public final class DownloaderImplTest {
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // Ensure that future is still removed from internal map
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(downloadRequest.destinationFileUri().toString());
+    assertThat(containsInProgressFuture(downloaderImpl, destinationFileUri.toString())).isFalse();
 
     // Verify that DownloadMonitor handled DownloadListener properly
     verify(mockDownloadMonitor).addDownloadListener(destinationFileUri, mockDownloadListener);
@@ -342,8 +347,10 @@ public final class DownloaderImplTest {
                             () -> {
                               try {
                                 // Verify that future map still contains download future.
-                                assertThat(downloaderImpl.keyToListenableFuture)
-                                    .containsKey(destinationFileUri.toString());
+                                assertThat(
+                                        containsInProgressFuture(
+                                            downloaderImpl, foregroundDownloadKey.toString()))
+                                    .isTrue();
                                 blockingOnCompleteLatch.await();
                               } catch (InterruptedException e) {
                                 // Ignore.
@@ -355,26 +362,27 @@ public final class DownloaderImplTest {
                     }))
             .build();
 
-    downloaderImpl.download(downloadRequest).get();
+    ListenableFuture<Void> downloadFuture = downloaderImpl.download(downloadRequest);
+    downloadFuture.get();
 
     // Verify that the download future map still contains the download future.
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // Finish the onComplete method.
     blockingOnCompleteLatch.countDown();
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // The completed download should be removed from keyToListenableFuture map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).isEmpty();
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl)).isEqualTo(0);
 
     // Verify DownloadListener was added/removed
     verify(mockDownloadMonitor).addDownloadListener(eq(destinationFileUri), any());
@@ -443,14 +451,13 @@ public final class DownloaderImplTest {
 
     ListenableFuture<Void> downloadFuture = downloaderImpl.download(downloadRequest);
 
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .containsKey(downloadRequest.destinationFileUri().toString());
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
 
     downloadFuture.cancel(true);
 
     // The download future should no longer be included in the future map
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(downloadRequest.destinationFileUri().toString());
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
 
     // Reset state of blocking file downloader to prevent deadlocks
     blockingFileDownloader.resetState();
@@ -491,8 +498,10 @@ public final class DownloaderImplTest {
                             () -> {
                               try {
                                 // Verify that future map still contains download future.
-                                assertThat(downloaderImpl.keyToListenableFuture)
-                                    .containsKey(destinationFileUri.toString());
+                                assertThat(
+                                        containsInProgressFuture(
+                                            downloaderImpl, foregroundDownloadKey.toString()))
+                                    .isTrue();
                                 blockingOnCompleteLatch.await();
                               } catch (InterruptedException e) {
                                 // Ignore.
@@ -504,26 +513,26 @@ public final class DownloaderImplTest {
                     }))
             .build();
 
-    downloaderImpl.download(downloadRequest).get();
+    ListenableFuture<Void> downloadFuture = downloaderImpl.download(downloadRequest);
+    downloadFuture.get();
 
     // Verify that the download future map still contains the download future.
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // Finish the onComplete method.
     blockingOnCompleteLatch.countDown();
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/* millis = */ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
-    // The completed download should be removed from keyToListenableFuture map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).isEmpty();
+    // The completed download should be removed from download future map.
+    assertThat(containsInProgressFuture(downloaderImpl, destinationFileUri.toString())).isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl)).isEqualTo(0);
   }
 
   @Test
@@ -630,16 +639,16 @@ public final class DownloaderImplTest {
             Optional.of(mockDownloadMonitor),
             blockingDownloaderSupplier);
 
-    int downloadFuturesInFlightCountBefore = downloaderImpl.keyToListenableFuture.size();
+    int downloadFuturesInFlightCountBefore = getInProgressFuturesCount(downloaderImpl);
 
     ListenableFuture<Void> downloadFuture1 =
         downloaderImpl.downloadWithForegroundService(downloadRequest);
     ListenableFuture<Void> downloadFuture2 =
         downloaderImpl.downloadWithForegroundService(downloadRequest);
 
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
 
-    assertThat(downloaderImpl.keyToListenableFuture.size() - downloadFuturesInFlightCountBefore)
+    assertThat(getInProgressFuturesCount(downloaderImpl) - downloadFuturesInFlightCountBefore)
         .isEqualTo(1);
 
     // Now we let the 2 futures downloadFuture1 downloadFuture2 to run by opening the latch.
@@ -651,11 +660,13 @@ public final class DownloaderImplTest {
 
     // TODO(b/147583059): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/*millis=*/ 1000);
-    // The completed download is removed from the uriToListenableFuture Map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).hasSize(downloadFuturesInFlightCountBefore);
+    Thread.sleep(/* millis= */ 1000);
+
+    // The completed download is removed from the download future  Map.
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl))
+        .isEqualTo(downloadFuturesInFlightCountBefore);
 
     // Reset state of blockingFileDownloader to prevent deadlocks
     blockingFileDownloader.resetState();
@@ -677,15 +688,14 @@ public final class DownloaderImplTest {
             Optional.of(mockDownloadMonitor),
             blockingDownloaderSupplier);
 
-    int downloadFuturesInFlightCountBefore = downloaderImpl.keyToListenableFuture.size();
+    int downloadFuturesInFlightCountBefore = getInProgressFuturesCount(downloaderImpl);
 
     ListenableFuture<Void> downloadFuture1 = downloaderImpl.download(downloadRequest);
     ListenableFuture<Void> downloadFuture2 =
         downloaderImpl.downloadWithForegroundService(downloadRequest);
 
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
-
-    assertThat(downloaderImpl.keyToListenableFuture.size() - downloadFuturesInFlightCountBefore)
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
+    assertThat(getInProgressFuturesCount(downloaderImpl) - downloadFuturesInFlightCountBefore)
         .isEqualTo(1);
 
     // Now we let the 2 futures downloadFuture1 downloadFuture2 to run by opening the latch.
@@ -697,11 +707,13 @@ public final class DownloaderImplTest {
 
     // TODO(b/155918406): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/*millis=*/ 1000);
-    // The completed download is removed from the uriToListenableFuture Map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).hasSize(downloadFuturesInFlightCountBefore);
+    Thread.sleep(/* millis= */ 1000);
+
+    // The completed download is removed from the download future Map.
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl))
+        .isEqualTo(downloadFuturesInFlightCountBefore);
 
     // Reset state of blockingFileDownloader to prevent deadlocks
     blockingFileDownloader.resetState();
@@ -733,7 +745,7 @@ public final class DownloaderImplTest {
 
     // TODO(b/147583059): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/*millis=*/ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // Verify that the correct DownloadRequest is sent to underderlying FileDownloader.
     com.google.android.libraries.mobiledatadownload.downloader.DownloadRequest
@@ -797,7 +809,7 @@ public final class DownloaderImplTest {
 
     // TODO(b/147583059): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/*millis=*/ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // Verify that the correct DownloadRequest is sent to underderlying FileDownloader.
     com.google.android.libraries.mobiledatadownload.downloader.DownloadRequest
@@ -861,13 +873,15 @@ public final class DownloaderImplTest {
                                 // Verify that before client's onComplete finishes, the on-going
                                 // download future map still contain this download. This means
                                 // the Foreground Download Service has not be shut down yet.
-                                assertThat(downloaderImpl.keyToListenableFuture)
-                                    .containsKey(destinationFileUri.toString());
+                                assertThat(
+                                        containsInProgressFuture(
+                                            downloaderImpl, foregroundDownloadKey.toString()))
+                                    .isTrue();
                                 blockingOnCompleteLatch.await();
                               } catch (InterruptedException e) {
                                 // Ignore.
                               }
-                              return Futures.immediateFuture(null);
+                              return Futures.immediateVoidFuture();
                             },
                             BACKGROUND_EXECUTOR);
                       }
@@ -886,22 +900,22 @@ public final class DownloaderImplTest {
 
     // TODO(b/147583059): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback to finish.
-    Thread.sleep(/*millis=*/ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
-    // Verify that this download future has not been removed from the keyToListenableFuture map yet.
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
+    // Verify that this download future has not been removed from the download future map yet.
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
 
     // Now let's the onComplete finishes.
     blockingOnCompleteLatch.countDown();
 
     // TODO(b/147583059): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the Future's callback on onComplete to finish.
-    Thread.sleep(/*millis=*/ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
-    // The completed download is removed from the keyToListenableFuture Map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).isEmpty();
+    // The completed download is removed from the download future Map.
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl)).isEqualTo(0);
 
     verify(mockDownloadMonitor).removeDownloadListener(destinationFileUri);
   }
@@ -938,7 +952,7 @@ public final class DownloaderImplTest {
 
     // TODO(b/147583059): Convert to Framework test and use TestingTaskBarrier to avoid sleep.
     // Sleep for 1 sec to wait for the listener to finish.
-    Thread.sleep(/*millis=*/ 1000);
+    Thread.sleep(/* millis= */ 1000);
 
     // Verify that the correct DownloadRequest is sent to underderlying FileDownloader.
     com.google.android.libraries.mobiledatadownload.downloader.DownloadRequest
@@ -977,23 +991,23 @@ public final class DownloaderImplTest {
             Optional.of(mockDownloadMonitor),
             blockingDownloaderSupplier);
 
-    int downloadFuturesInFlightCountBefore = downloaderImpl.keyToListenableFuture.size();
+    int downloadFuturesInFlightCountBefore = getInProgressFuturesCount(downloaderImpl);
 
     ListenableFuture<Void> downloadFuture =
         downloaderImpl.downloadWithForegroundService(downloadRequest);
 
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
-
-    assertThat(downloaderImpl.keyToListenableFuture.size() - downloadFuturesInFlightCountBefore)
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
+    assertThat(getInProgressFuturesCount(downloaderImpl) - downloadFuturesInFlightCountBefore)
         .isEqualTo(1);
 
-    downloaderImpl.cancelForegroundDownload(destinationFileUri.toString());
+    downloaderImpl.cancelForegroundDownload(foregroundDownloadKey.toString());
     assertTrue(downloadFuture.isCancelled());
 
-    // The completed download is removed from the uriToListenableFuture Map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
-    assertThat(downloaderImpl.keyToListenableFuture).hasSize(downloadFuturesInFlightCountBefore);
+    // The completed download is removed from the download future Map.
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
+    assertThat(getInProgressFuturesCount(downloaderImpl))
+        .isEqualTo(downloadFuturesInFlightCountBefore);
 
     // Reset state of blockingFileDownloader to prevent deadlocks
     blockingFileDownloader.resetState();
@@ -1017,15 +1031,25 @@ public final class DownloaderImplTest {
     ListenableFuture<Void> downloadFuture =
         downloaderImpl.downloadWithForegroundService(downloadRequest);
 
-    assertThat(downloaderImpl.keyToListenableFuture).containsKey(destinationFileUri.toString());
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString())).isTrue();
 
     downloadFuture.cancel(true);
 
     // The completed download is removed from the uriToListenableFuture Map.
-    assertThat(downloaderImpl.keyToListenableFuture)
-        .doesNotContainKey(destinationFileUri.toString());
+    assertThat(containsInProgressFuture(downloaderImpl, foregroundDownloadKey.toString()))
+        .isFalse();
 
     // Reset state of blockingFileDownloader to prevent deadlocks
     blockingFileDownloader.resetState();
+  }
+
+  private static int getInProgressFuturesCount(DownloaderImpl downloaderImpl) {
+    return downloaderImpl.downloadFutureMap.keyToDownloadFutureMap.size()
+        + downloaderImpl.foregroundDownloadFutureMap.keyToDownloadFutureMap.size();
+  }
+
+  private static boolean containsInProgressFuture(DownloaderImpl downloaderImpl, String key) {
+    return downloaderImpl.downloadFutureMap.keyToDownloadFutureMap.containsKey(key)
+        || downloaderImpl.foregroundDownloadFutureMap.keyToDownloadFutureMap.containsKey(key);
   }
 }
