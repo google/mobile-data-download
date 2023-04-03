@@ -22,23 +22,32 @@ import com.google.android.libraries.mobiledatadownload.internal.logging.EventLog
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.util.concurrent.AsyncCallable;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
+import com.google.mobiledatadownload.LogEnumsProto.MddDownloadResult;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
+import com.google.mobiledatadownload.LogProto.MddStorageStats;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Fake implementation of {@link EventLogger} for use in tests. */
 public final class FakeEventLogger implements EventLogger {
 
-  private final ArrayList<Integer> loggedCodes = new ArrayList<>();
-  private final ArrayListMultimap<Void, Void> loggedLatencies = ArrayListMultimap.create();
+  private final ArrayList<MddClientEvent.Code> loggedCodes = new ArrayList<>();
+  private final ArrayListMultimap<DataDownloadFileGroupStats, Void> loggedLatencies =
+      ArrayListMultimap.create();
+  private final ArrayListMultimap<DataDownloadFileGroupStats, Void> loggedNewConfigReceived =
+      ArrayListMultimap.create();
+  private final List<Void> loggedMddLibApiResultLog = new ArrayList<>();
+  private final ArrayList<DataDownloadFileGroupStats> loggedMddQueryStats = new ArrayList<>();
 
   @Override
-  public void logEventSampled(int eventCode) {
+  public void logEventSampled(MddClientEvent.Code eventCode) {
     loggedCodes.add(eventCode);
   }
 
   @Override
   public void logEventSampled(
-      int eventCode,
+      MddClientEvent.Code eventCode,
       String fileGroupName,
       int fileGroupVersionNumber,
       long buildId,
@@ -47,7 +56,7 @@ public final class FakeEventLogger implements EventLogger {
   }
 
   @Override
-  public void logEventAfterSample(int eventCode, int sampleInterval) {
+  public void logEventAfterSample(MddClientEvent.Code eventCode, int sampleInterval) {
     loggedCodes.add(eventCode);
   }
 
@@ -59,12 +68,22 @@ public final class FakeEventLogger implements EventLogger {
   }
 
   @Override
-  public void logMddApiCallStats(Void fileGroupDetails, Void apiCallStats) {
+  public void logMddApiCallStats(DataDownloadFileGroupStats fileGroupDetails, Void apiCallStats) {
     throw new UnsupportedOperationException("This method is not implemented in the fake yet.");
   }
 
   @Override
-  public ListenableFuture<Void> logMddStorageStats(AsyncCallable<Void> buildMddStorageStats) {
+  public void logMddLibApiResultLog(Void mddLibApiResultLog) {
+    loggedMddLibApiResultLog.add(mddLibApiResultLog);
+  }
+
+  public List<Void> getLoggedMddLibApiResultLogs() {
+    return loggedMddLibApiResultLog;
+  }
+
+  @Override
+  public ListenableFuture<Void> logMddStorageStats(
+      AsyncCallable<MddStorageStats> buildMddStorageStats) {
     return immediateFailedFuture(
         new UnsupportedOperationException("This method is not implemented in the fake yet."));
   }
@@ -82,7 +101,7 @@ public final class FakeEventLogger implements EventLogger {
 
   @Override
   public void logMddNetworkSavings(
-      Void fileGroupDetails,
+      DataDownloadFileGroupStats fileGroupDetails,
       int code,
       long fullFileSize,
       long downloadedFileSize,
@@ -92,13 +111,14 @@ public final class FakeEventLogger implements EventLogger {
   }
 
   @Override
-  public void logMddDownloadResult(int code, Void fileGroupDetails) {
+  public void logMddDownloadResult(
+      MddDownloadResult.Code code, DataDownloadFileGroupStats fileGroupDetails) {
     throw new UnsupportedOperationException("This method is not implemented in the fake yet.");
   }
 
   @Override
-  public void logMddQueryStats(Void fileGroupDetails) {
-    throw new UnsupportedOperationException("This method is not implemented in the fake yet.");
+  public void logMddQueryStats(DataDownloadFileGroupStats fileGroupDetails) {
+    loggedMddQueryStats.add(fileGroupDetails);
   }
 
   @Override
@@ -107,20 +127,43 @@ public final class FakeEventLogger implements EventLogger {
   }
 
   @Override
-  public void logMddDownloadLatency(Void fileGroupStats, Void downloadLatency) {
+  public void logMddDownloadLatency(
+      DataDownloadFileGroupStats fileGroupStats, Void downloadLatency) {
     loggedLatencies.put(fileGroupStats, downloadLatency);
   }
 
   @Override
-  public void logMddUsageEvent(Void fileGroupDetails, Void usageEventLog) {
+  public void logMddUsageEvent(DataDownloadFileGroupStats fileGroupDetails, Void usageEventLog) {
     throw new UnsupportedOperationException("This method is not implemented in the fake yet.");
   }
 
-  public List<Integer> getLoggedCodes() {
+  @Override
+  public void logNewConfigReceived(
+      DataDownloadFileGroupStats fileGroupDetails, Void newConfigReceivedInfo) {
+    loggedNewConfigReceived.put(fileGroupDetails, newConfigReceivedInfo);
+  }
+
+  public void reset() {
+    loggedCodes.clear();
+    loggedLatencies.clear();
+    loggedMddQueryStats.clear();
+    loggedNewConfigReceived.clear();
+    loggedMddLibApiResultLog.clear();
+  }
+
+  public ArrayListMultimap<DataDownloadFileGroupStats, Void> getLoggedNewConfigReceived() {
+    return loggedNewConfigReceived;
+  }
+
+  public List<MddClientEvent.Code> getLoggedCodes() {
     return loggedCodes;
   }
 
-  public ArrayListMultimap<Void, Void> getLoggedLatencies() {
+  public ArrayListMultimap<DataDownloadFileGroupStats, Void> getLoggedLatencies() {
     return loggedLatencies;
+  }
+
+  public ArrayList<DataDownloadFileGroupStats> getLoggedMddQueryStats() {
+    return loggedMddQueryStats;
   }
 }

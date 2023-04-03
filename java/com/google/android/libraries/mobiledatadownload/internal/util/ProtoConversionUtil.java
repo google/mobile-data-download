@@ -41,6 +41,13 @@ public final class ProtoConversionUtil {
         group.toByteArray(), ExtensionRegistryLite.getEmptyRegistry());
   }
 
+  public static DataFileGroup reverse(DataFileGroupInternal group)
+      throws InvalidProtocolBufferException {
+    // Cannot use generated registry here, because it may cause NPE to clients.
+    // For more detail, see b/140135059.
+    return DataFileGroup.parseFrom(group.toByteArray(), ExtensionRegistryLite.getEmptyRegistry());
+  }
+
   /**
    * Converts external proto {@link DownloadConditions} into internal proto {@link
    * MetadataProto.DownloadConditions}.
@@ -61,6 +68,10 @@ public final class ProtoConversionUtil {
   // TODO(b/176103639): Use automated proto converter instead
   // LINT.IfChange(data_file_convert)
   public static MetadataProto.DataFile convertDataFile(DataFile dataFile) {
+    // incompatible argument for parameter value of setChecksumType.
+    // incompatible argument for parameter value of setAndroidSharingType.
+    // incompatible argument for parameter value of setAndroidSharingChecksumType.
+    @SuppressWarnings("nullness:argument.type.incompatible")
     MetadataProto.DataFile.Builder dataFileBuilder =
         MetadataProto.DataFile.newBuilder()
             .setFileId(dataFile.getFileId())
@@ -110,6 +121,8 @@ public final class ProtoConversionUtil {
    */
   // TODO(b/176103639): Use automated proto converter instead
   // LINT.IfChange(delta_file_convert)
+  // incompatible argument for parameter value of setDiffDecoder.
+  @SuppressWarnings("nullness:argument.type.incompatible")
   public static MetadataProto.DeltaFile convertDeltaFile(DeltaFile deltaFile) {
     return MetadataProto.DeltaFile.newBuilder()
         .setUrlToDownload(deltaFile.getUrlToDownload())

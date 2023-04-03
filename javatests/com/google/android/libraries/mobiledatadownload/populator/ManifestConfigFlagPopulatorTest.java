@@ -26,6 +26,7 @@ import static org.mockito.Mockito.when;
 import com.google.android.libraries.mobiledatadownload.AddFileGroupRequest;
 import com.google.android.libraries.mobiledatadownload.MobileDataDownload;
 import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -89,7 +90,11 @@ public class ManifestConfigFlagPopulatorTest {
     ManifestConfig manifestConfig = createManifestConfig();
 
     ManifestConfigHelper.refreshFromManifestConfig(
-            mockMobileDataDownload, manifestConfig, /*overriderOptional=*/ Optional.absent())
+            mockMobileDataDownload,
+            manifestConfig,
+            /* overriderOptional= */ Optional.absent(),
+            /* accounts= */ ImmutableList.of(),
+            /* addGroupsWithVariantId= */ false)
         .get();
     verify(mockMobileDataDownload, times(2)).addFileGroup(addFileGroupRequestCaptor.capture());
 
@@ -120,7 +125,9 @@ public class ManifestConfigFlagPopulatorTest {
     ManifestConfigHelper.refreshFromManifestConfig(
             mockMobileDataDownload,
             manifestConfigWithUrlTemplate,
-            /*overriderOptional=*/ Optional.absent())
+            /* overriderOptional= */ Optional.absent(),
+            /* accounts= */ ImmutableList.of(),
+            /* addGroupsWithVariantId= */ false)
         .get();
     verify(mockMobileDataDownload, times(2)).addFileGroup(addFileGroupRequestCaptor.capture());
 
@@ -144,7 +151,9 @@ public class ManifestConfigFlagPopulatorTest {
                 ManifestConfigHelper.refreshFromManifestConfig(
                         mockMobileDataDownload,
                         manifestConfigWithoutUrlTemplate,
-                        /*overriderOptional=*/ Optional.absent())
+                        /* overriderOptional= */ Optional.absent(),
+                        /* accounts= */ ImmutableList.of(),
+                        /* addGroupsWithVariantId= */ false)
                     .get());
 
     assertThat(illegalArgumentException)
@@ -172,7 +181,11 @@ public class ManifestConfigFlagPopulatorTest {
         };
 
     ManifestConfigHelper.refreshFromManifestConfig(
-            mockMobileDataDownload, manifestConfig, Optional.of(overrider))
+            mockMobileDataDownload,
+            manifestConfig,
+            Optional.of(overrider),
+            /* accounts= */ ImmutableList.of(),
+            /* addGroupsWithVariantId= */ false)
         .get();
     verify(mockMobileDataDownload, times(2)).addFileGroup(addFileGroupRequestCaptor.capture());
 
@@ -204,7 +217,11 @@ public class ManifestConfigFlagPopulatorTest {
         };
 
     ManifestConfigHelper.refreshFromManifestConfig(
-            mockMobileDataDownload, manifestConfig, Optional.of(overrider))
+            mockMobileDataDownload,
+            manifestConfig,
+            Optional.of(overrider),
+            /* accounts= */ ImmutableList.of(),
+            /* addGroupsWithVariantId= */ false)
         .get();
     verify(mockMobileDataDownload, times(1)).addFileGroup(addFileGroupRequestCaptor.capture());
 

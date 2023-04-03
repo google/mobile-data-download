@@ -21,18 +21,21 @@ import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopul
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_ID;
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_SIZE;
 import static com.google.android.libraries.mobiledatadownload.TestFileGroupPopulator.FILE_URL;
+import static com.google.android.libraries.mobiledatadownload.testing.MddTestDependencies.ExecutorType;
 import static com.google.android.libraries.mobiledatadownload.tracing.TracePropagation.propagateCallable;
 import static com.google.common.truth.Truth.assertThat;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.fail;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import android.accounts.Account;
 import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 import androidx.test.core.app.ApplicationProvider;
-import androidx.test.runner.AndroidJUnit4;
 import com.google.android.libraries.mobiledatadownload.account.AccountUtil;
 import com.google.android.libraries.mobiledatadownload.downloader.FileDownloader;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
@@ -54,42 +57,52 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.common.util.concurrent.ListeningScheduledExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFile;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFile;
-import com.google.mobiledatadownload.DownloadConfigProto.DataFile.ChecksumType;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
-import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions;
 import com.google.mobiledatadownload.DownloadConfigProto.DownloadConditions.DeviceNetworkPolicy;
+import com.google.mobiledatadownload.LogEnumsProto.MddDownloadResult;
+import com.google.mobiledatadownload.LogProto.MddDownloadResultLog;
+import com.google.mobiledatadownload.LogProto.MddLogData;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeoutException;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameter;
+import org.junit.runners.Parameterized.Parameters;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-@RunWith(AndroidJUnit4.class)
+// NOTE: TestParameterInjector is preferred for parameterized tests, but it has a API
+// level constraint of >= 24 while MDD has a constraint of >= 16. To prevent basic regressions, run
+// this test using junit's Parameterized TestRunner, which supports all API levels.
+@RunWith(Parameterized.class)
 public class MobileDataDownloadIntegrationTest {
 
   private static final String TAG = "MobileDataDownloadIntegrationTest";
   private static final int MAX_HANDLE_TASK_WAIT_TIME_SECS = 300;
+  private static final int MAX_MDD_API_WAIT_TIME_SECS = 5;
 
   private static final String TEST_DATA_RELATIVE_PATH =
       "third_party/java_src/android_libs/mobiledatadownload/javatests/com/google/android/libraries/mobiledatadownload/testdata/";
 
-  // Note: Control Executor must not be a single thread executor.
-  private static final ListeningExecutorService CONTROL_EXECUTOR =
-      MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
-  private static final ScheduledExecutorService DOWNLOAD_EXECUTOR =
-      Executors.newScheduledThreadPool(2);
+  private static final ListeningScheduledExecutorService DOWNLOAD_EXECUTOR =
+      MoreExecutors.listeningDecorator(Executors.newScheduledThreadPool(2));
 
   private static final Context context = ApplicationProvider.getApplicationContext();
   private final NetworkUsageMonitor networkUsageMonitor =
@@ -103,31 +116,52 @@ public class MobileDataDownloadIntegrationTest {
 
   private final TestFlags flags = new TestFlags();
 
+  private ListeningExecutorService controlExecutor;
+
+  private MobileDataDownload mobileDataDownload;
+
   @Mock private Logger mockLogger;
   @Mock private TaskScheduler mockTaskScheduler;
 
   @Rule public final MockitoRule mocks = MockitoJUnit.rule();
 
+  @Parameter public ExecutorType controlExecutorType;
+
+  @Parameters
+  public static Collection<Object[]> data() {
+    return Arrays.asList(
+        new Object[][] {
+          {ExecutorType.SINGLE_THREADED}, {ExecutorType.MULTI_THREADED},
+        });
+  }
+
   @Before
   public void setUp() throws Exception {
+
     flags.enableZipFolder = Optional.of(true);
+
+    controlExecutor = controlExecutorType.executor();
+  }
+
+  @After
+  public void tearDown() throws Exception {
+    mobileDataDownload.clear().get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
   }
 
   @Test
   public void download_success_fileGroupDownloaded() throws Exception {
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownloadAfterDownload(
-            () ->
-                new TestFileDownloader(
-                    TEST_DATA_RELATIVE_PATH,
-                    fileStorage,
-                    MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)),
-            new TestFileGroupPopulator(context));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
 
-    // This will trigger refreshing of FileGroupPopulators and downloading.
-    mobileDataDownload
-        .handleTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK)
-        .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
+    waitForHandleTask();
 
     String debugString = mobileDataDownload.getDebugInfoAsString();
     Log.i(TAG, "MDD Lib dump:");
@@ -135,10 +169,8 @@ public class MobileDataDownloadIntegrationTest {
       Log.i(TAG, line);
     }
 
-    ClientFileGroup clientFileGroup =
-        getAndVerifyClientFileGroup(mobileDataDownload, FILE_GROUP_NAME, 1);
+    ClientFileGroup clientFileGroup = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
     verifyClientFile(clientFileGroup.getFileList().get(0), FILE_ID, FILE_SIZE);
-    mobileDataDownload.clear().get();
   }
 
   @Test
@@ -164,75 +196,84 @@ public class MobileDataDownloadIntegrationTest {
                       }));
         };
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownloadBuilder(
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
                 () ->
                     new TestFileDownloader(
                         TEST_DATA_RELATIVE_PATH,
                         fileStorage,
-                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)),
-                new TestFileGroupPopulator(context))
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
             .setCustomFileGroupValidatorOptional(Optional.of(validator))
             .build();
 
-    // This will trigger refreshing of FileGroupPopulators and downloading.
-    mobileDataDownload
-        .handleTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK)
-        .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
+    waitForHandleTask();
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
             .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-            .get();
+            .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
     verifyClientFile(clientFileGroup.getFileList().get(0), FILE_ID, FILE_SIZE);
-
-    mobileDataDownload.clear().get();
   }
 
   @Test
   public void download_success_maintenanceLogsNetworkUsage() throws Exception {
     flags.networkStatsLoggingSampleInterval = Optional.of(1);
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(
-            () ->
-                new TestFileDownloader(
-                    TEST_DATA_RELATIVE_PATH,
-                    fileStorage,
-                    MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)),
-            new TestFileGroupPopulator(context));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
 
-    // This will trigger refreshing of FileGroupPopulators and downloading.
-    mobileDataDownload
-        .handleTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK)
-        .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
+    waitForHandleTask();
 
     // This should flush the logs from NetworkLogger.
     mobileDataDownload
         .handleTask(TaskScheduler.MAINTENANCE_PERIODIC_TASK)
         .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
 
-    ClientFileGroup clientFileGroup =
-        getAndVerifyClientFileGroup(mobileDataDownload, FILE_GROUP_NAME, 1);
+    ClientFileGroup clientFileGroup = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
     verifyClientFile(clientFileGroup.getFileList().get(0), FILE_ID, FILE_SIZE);
 
-    mobileDataDownload.clear().get();
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1056 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger, times(1)).log(logDataCaptor.capture(), /* eventCode= */ eq(1056));
+
+    List<MddLogData> logDataList = logDataCaptor.getAllValues();
+    assertThat(logDataList).hasSize(1);
+    MddLogData logData = logDataList.get(0);
+
+    Void mddNetworkStats = null;
+
+    // Network status changes depending on emulator:
+    boolean isCellular = NetworkUsageMonitor.isCellular(context);
   }
 
   @Test
   public void corrupted_files_detectedDuringMaintenance() throws Exception {
     flags.mddDefaultSampleInterval = Optional.of(1);
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownloadAfterDownload(
-            () ->
-                new TestFileDownloader(
-                    TEST_DATA_RELATIVE_PATH,
-                    fileStorage,
-                    MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)),
-            new TestFileGroupPopulator(context));
 
-    ClientFileGroup clientFileGroup =
-        getAndVerifyClientFileGroup(mobileDataDownload, FILE_GROUP_NAME, 1);
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
+
+    waitForHandleTask();
+
+    ClientFileGroup clientFileGroup = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
     fileStorage.open(
         Uri.parse(clientFileGroup.getFile(0).getFileUri()), WriteStringOpener.create("c0rrupt3d"));
 
@@ -247,29 +288,31 @@ public class MobileDataDownloadIntegrationTest {
         .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
 
     // Re-load the file group since the on-disk URIs will have changed.
-    clientFileGroup = getAndVerifyClientFileGroup(mobileDataDownload, FILE_GROUP_NAME, 1);
+    clientFileGroup = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
     assertThat(
             fileStorage.open(
                 Uri.parse(clientFileGroup.getFile(0).getFileUri()), ReadStringOpener.create()))
         .isNotEqualTo("c0rrupt3d");
-
-    mobileDataDownload.clear().get();
   }
 
   @Test
   public void delete_files_detectedDuringMaintenance() throws Exception {
     flags.mddDefaultSampleInterval = Optional.of(1);
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownloadAfterDownload(
-            () ->
-                new TestFileDownloader(
-                    TEST_DATA_RELATIVE_PATH,
-                    fileStorage,
-                    MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)),
-            new TestFileGroupPopulator(context));
 
-    ClientFileGroup clientFileGroup =
-        getAndVerifyClientFileGroup(mobileDataDownload, FILE_GROUP_NAME, 1);
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
+
+    waitForHandleTask();
+
+    ClientFileGroup clientFileGroup = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
     fileStorage.deleteFile(Uri.parse(clientFileGroup.getFile(0).getFileUri()));
 
     // Bad file is detected during maintenance.
@@ -283,29 +326,24 @@ public class MobileDataDownloadIntegrationTest {
         .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
 
     // Re-load the file group since the on-disk URIs will have changed.
-    clientFileGroup = getAndVerifyClientFileGroup(mobileDataDownload, FILE_GROUP_NAME, 1);
+    clientFileGroup = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
     assertThat(fileStorage.exists(Uri.parse(clientFileGroup.getFile(0).getFileUri()))).isTrue();
-
-    mobileDataDownload.clear().get();
   }
 
   @Test
   public void remove_withAccount_fileGroupRemains() throws Exception {
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownloadAfterDownload(
-            fileDownloaderSupplier, new TestFileGroupPopulator(context));
-
-    // This will trigger refreshing of FileGroupPopulators and downloading.
-    mobileDataDownload
-        .handleTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK)
-        .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
+    waitForHandleTask();
 
     // Remove the file group with account doesn't change anything, because the test group is not
     // associated with any account.
@@ -318,67 +356,83 @@ public class MobileDataDownloadIntegrationTest {
                         .setGroupName(FILE_GROUP_NAME)
                         .setAccountOptional(Optional.of(account))
                         .build())
-                .get())
+                .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS))
         .isTrue();
 
-    ClientFileGroup clientFileGroup =
-        getAndVerifyClientFileGroup(mobileDataDownload, FILE_GROUP_NAME, 1);
+    ClientFileGroup clientFileGroup = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
     verifyClientFile(clientFileGroup.getFileList().get(0), FILE_ID, FILE_SIZE);
-    mobileDataDownload.clear().get();
   }
 
   @Test
   public void remove_withoutAccount_fileGroupRemoved() throws Exception {
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownloadAfterDownload(
-            fileDownloaderSupplier, new TestFileGroupPopulator(context));
-
-    // This will trigger refreshing of FileGroupPopulators and downloading.
-    mobileDataDownload
-        .handleTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK)
-        .get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
+    waitForHandleTask();
 
     // Remove the file group will make the file group not accessible from clients.
     assertThat(
             mobileDataDownload
                 .removeFileGroup(
                     RemoveFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-                .get())
+                .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS))
         .isTrue();
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
             .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-            .get();
+            .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
     assertThat(clientFileGroup).isNull();
-    mobileDataDownload.clear().get();
   }
 
   @Test
-  public void
-      removeFileGroupsByFilter_whenAccountNotSpecified_removesMatchingAccountIndependentGroups()
-          throws Exception {
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
+  public void removeFileGroupsByFilter_removesMatchingGroups() throws Exception {
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .build();
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(fileDownloaderSupplier, unused -> Futures.immediateVoidFuture());
+    // Remove All Groups to clear state
+    mobileDataDownload
+        .removeFileGroupsByFilter(RemoveFileGroupsByFilterRequest.newBuilder().build())
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+
+    // Tear down: remove remaining group to prevent cross test errors
+    mobileDataDownload
+        .removeFileGroupsByFilter(RemoveFileGroupsByFilterRequest.newBuilder().build())
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+  }
+
+  @Test
+  public void removeFileGroupsByFilter_whenAccountSpecified_removesMatchingAccountDependentGroups()
+      throws Exception {
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .build();
 
     // Remove all groups
     mobileDataDownload
         .removeFileGroupsByFilter(RemoveFileGroupsByFilterRequest.newBuilder().build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     // Setup account
     Account account = AccountUtil.create("name", "google");
@@ -402,34 +456,117 @@ public class MobileDataDownloadIntegrationTest {
     mobileDataDownload
         .addFileGroup(
             AddFileGroupRequest.newBuilder().setDataFileGroup(fileGroupWithoutAccount).build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
     mobileDataDownload
         .addFileGroup(
             AddFileGroupRequest.newBuilder()
                 .setDataFileGroup(fileGroupWithAccount)
                 .setAccountOptional(Optional.of(account))
                 .build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     // Verify that both groups are present
     assertThat(
             mobileDataDownload
                 .getFileGroupsByFilter(
                     GetFileGroupsByFilterRequest.newBuilder().setIncludeAllGroups(true).build())
-                .get())
+                .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS))
+        .hasSize(2);
+
+    // Remove file groups with given account and source
+    mobileDataDownload
+        .removeFileGroupsByFilter(
+            RemoveFileGroupsByFilterRequest.newBuilder()
+                .setAccountOptional(Optional.of(account))
+                .build())
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+
+    // Check that only account-independent group remains
+    ImmutableList<ClientFileGroup> remainingGroups =
+        mobileDataDownload
+            .getFileGroupsByFilter(
+                GetFileGroupsByFilterRequest.newBuilder().setIncludeAllGroups(true).build())
+            .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+    assertThat(remainingGroups).hasSize(1);
+    assertThat(remainingGroups.get(0).getGroupName()).isEqualTo(FILE_GROUP_NAME);
+
+    // Tear down: remove remaining group to prevent cross test errors
+    mobileDataDownload
+        .removeFileGroupsByFilter(RemoveFileGroupsByFilterRequest.newBuilder().build())
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+  }
+
+  @Test
+  public void
+      removeFileGroupsByFilter_whenAccountNotSpecified_removesMatchingAccountIndependentGroups()
+          throws Exception {
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .build();
+
+    waitForHandleTask();
+
+    // Remove all groups
+    mobileDataDownload
+        .removeFileGroupsByFilter(RemoveFileGroupsByFilterRequest.newBuilder().build())
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+
+    // Setup account
+    Account account = AccountUtil.create("name", "google");
+
+    // Setup two groups, 1 with account and 1 without an account
+    DataFileGroup fileGroupWithoutAccount =
+        TestFileGroupPopulator.createDataFileGroup(
+                FILE_GROUP_NAME,
+                context.getPackageName(),
+                new String[] {FILE_ID},
+                new int[] {FILE_SIZE},
+                new String[] {FILE_CHECKSUM},
+                new String[] {FILE_URL},
+                DeviceNetworkPolicy.DOWNLOAD_ON_ANY_NETWORK)
+            .toBuilder()
+            .build();
+    DataFileGroup fileGroupWithAccount =
+        fileGroupWithoutAccount.toBuilder().setGroupName(FILE_GROUP_NAME + "_2").build();
+
+    // Add both groups to MDD
+    mobileDataDownload
+        .addFileGroup(
+            AddFileGroupRequest.newBuilder().setDataFileGroup(fileGroupWithoutAccount).build())
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+    mobileDataDownload
+        .addFileGroup(
+            AddFileGroupRequest.newBuilder()
+                .setDataFileGroup(fileGroupWithAccount)
+                .setAccountOptional(Optional.of(account))
+                .build())
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+
+    // Verify that both groups are present
+    assertThat(
+            mobileDataDownload
+                .getFileGroupsByFilter(
+                    GetFileGroupsByFilterRequest.newBuilder().setIncludeAllGroups(true).build())
+                .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS))
         .hasSize(2);
 
     // Remove file groups with given source only
     mobileDataDownload
         .removeFileGroupsByFilter(RemoveFileGroupsByFilterRequest.newBuilder().build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     // Check that only account-dependent group remains
     ImmutableList<ClientFileGroup> remainingGroups =
         mobileDataDownload
             .getFileGroupsByFilter(
                 GetFileGroupsByFilterRequest.newBuilder().setIncludeAllGroups(true).build())
-            .get();
+            .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
     assertThat(remainingGroups).hasSize(1);
     assertThat(remainingGroups.get(0).getGroupName()).isEqualTo(FILE_GROUP_NAME + "_2");
 
@@ -439,22 +576,25 @@ public class MobileDataDownloadIntegrationTest {
             RemoveFileGroupsByFilterRequest.newBuilder()
                 .setAccountOptional(Optional.of(account))
                 .build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
   }
 
   @Test
   public void download_failure_throwsDownloadException() throws Exception {
     flags.mddDefaultSampleInterval = Optional.of(1);
 
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(fileDownloaderSupplier, new TestFileGroupPopulator(context));
+    waitForHandleTask();
 
     DataFileGroup dataFileGroup =
         TestFileGroupPopulator.createDataFileGroup(
@@ -473,7 +613,7 @@ public class MobileDataDownloadIntegrationTest {
             mobileDataDownload
                 .addFileGroup(
                     AddFileGroupRequest.newBuilder().setDataFileGroup(dataFileGroup).build())
-                .get())
+                .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS))
         .isTrue();
 
     ListenableFuture<ClientFileGroup> downloadFuture =
@@ -494,15 +634,16 @@ public class MobileDataDownloadIntegrationTest {
   public void download_failure_logsEvent() throws Exception {
     flags.mddDefaultSampleInterval = Optional.of(1);
 
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
-
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(fileDownloaderSupplier, new TestFileGroupPopulator(context));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TestFileGroupPopulator(context))
+            .build();
 
     DataFileGroup dataFileGroup =
         TestFileGroupPopulator.createDataFileGroup(
@@ -521,7 +662,7 @@ public class MobileDataDownloadIntegrationTest {
             mobileDataDownload
                 .addFileGroup(
                     AddFileGroupRequest.newBuilder().setDataFileGroup(dataFileGroup).build())
-                .get())
+                .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS))
         .isTrue();
 
     ListenableFuture<ClientFileGroup> downloadFuture =
@@ -529,23 +670,53 @@ public class MobileDataDownloadIntegrationTest {
             DownloadFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build());
 
     assertThrows(ExecutionException.class, downloadFuture::get);
+
+    if (controlExecutorType.equals(ExecutorType.SINGLE_THREADED)) {
+      // Single-threaded executor step requires some time to allow logging to finish.
+      // TODO: Investigate whether TestingTaskBarrier can be used here to wait for
+      // executor become idle.
+      Thread.sleep(500);
+    }
+
+    ArgumentCaptor<MddLogData> logDataCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1068 is the tag number for MddClientEvent.Code.DATA_DOWNLOAD_RESULT_LOG.
+    verify(mockLogger, times(2)).log(logDataCaptor.capture(), /* eventCode= */ eq(1068));
+
+    List<MddLogData> logData = logDataCaptor.getAllValues();
+    assertThat(logData).hasSize(2);
+
+    MddDownloadResultLog downloadResultLog1 = logData.get(0).getMddDownloadResultLog();
+    MddDownloadResultLog downloadResultLog2 = logData.get(1).getMddDownloadResultLog();
+    assertThat(downloadResultLog1.getResult()).isEqualTo(MddDownloadResult.Code.INSECURE_URL_ERROR);
+    assertThat(downloadResultLog1.getDataDownloadFileGroupStats().getFileGroupName())
+        .isEqualTo(FILE_GROUP_NAME);
+    assertThat(downloadResultLog1.getDataDownloadFileGroupStats().getOwnerPackage())
+        .isEqualTo(context.getPackageName());
+    assertThat(downloadResultLog2.getResult())
+        .isEqualTo(MddDownloadResult.Code.ANDROID_DOWNLOADER_HTTP_ERROR);
+    assertThat(downloadResultLog2.getDataDownloadFileGroupStats().getFileGroupName())
+        .isEqualTo(FILE_GROUP_NAME);
+    assertThat(downloadResultLog2.getDataDownloadFileGroupStats().getOwnerPackage())
+        .isEqualTo(context.getPackageName());
   }
 
   @Test
   public void download_zipFile_unzippedAfterDownload() throws Exception {
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new ZipFolderFileGroupPopulator(context))
+            .build();
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownloadAfterDownload(
-            fileDownloaderSupplier, new ZipFolderFileGroupPopulator(context));
+    waitForHandleTask();
+
     ClientFileGroup clientFileGroup =
-        getAndVerifyClientFileGroup(
-            mobileDataDownload, ZipFolderFileGroupPopulator.FILE_GROUP_NAME, 3);
+        getAndVerifyClientFileGroup(ZipFolderFileGroupPopulator.FILE_GROUP_NAME, 3);
 
     for (ClientFile clientFile : clientFileGroup.getFileList()) {
       if ("/zip1.txt".equals(clientFile.getFileId())) {
@@ -562,12 +733,12 @@ public class MobileDataDownloadIntegrationTest {
 
   @Test
   public void download_cancelDuringDownload_downloadCancelled() throws Exception {
-    BlockingFileDownloader blockingFileDownloader = new BlockingFileDownloader(CONTROL_EXECUTOR);
+    BlockingFileDownloader blockingFileDownloader = new BlockingFileDownloader(DOWNLOAD_EXECUTOR);
 
     Supplier<FileDownloader> fakeFileDownloaderSupplier = () -> blockingFileDownloader;
 
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(fakeFileDownloaderSupplier, new TestFileGroupPopulator(context));
+    mobileDataDownload =
+        builderForTest().setFileDownloaderSupplier(fakeFileDownloaderSupplier).build();
 
     // Register the file group and trigger download.
     mobileDataDownload
@@ -583,7 +754,7 @@ public class MobileDataDownloadIntegrationTest {
                         new String[] {FILE_URL},
                         DeviceNetworkPolicy.DOWNLOAD_ON_ANY_NETWORK))
                 .build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
     ListenableFuture<ClientFileGroup> downloadFuture =
         mobileDataDownload.downloadFileGroup(
             DownloadFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build());
@@ -595,7 +766,7 @@ public class MobileDataDownloadIntegrationTest {
     // Now remove the file group from MDD, which would cancel any ongoing download.
     mobileDataDownload
         .removeFileGroup(RemoveFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
     // Now let the download future finish.
     blockingFileDownloader.finishDownloading();
 
@@ -614,25 +785,25 @@ public class MobileDataDownloadIntegrationTest {
 
   @Test
   public void download_twoStepDownload_targetFileDownloaded() throws Exception {
-    Supplier<FileDownloader> fileDownloaderSupplier =
-        () ->
-            new TestFileDownloader(
-                TEST_DATA_RELATIVE_PATH,
-                fileStorage,
-                MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
-
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(fileDownloaderSupplier, new TwoStepPopulator(context, fileStorage));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .addFileGroupPopulator(new TwoStepPopulator(context, fileStorage))
+            .build();
 
     // Add step1 file group to MDD.
     DataFileGroup step1FileGroup =
-        createDataFileGroup(
+        TestFileGroupPopulator.createDataFileGroup(
             "step1-file-group",
             context.getPackageName(),
             new String[] {"step1_id"},
             new int[] {57},
             new String[] {""},
-            new ChecksumType[] {ChecksumType.NONE},
             new String[] {"https://www.gstatic.com/icing/idd/sample_group/step1.txt"},
             DeviceNetworkPolicy.DOWNLOAD_ON_ANY_NETWORK);
 
@@ -649,24 +820,26 @@ public class MobileDataDownloadIntegrationTest {
     // step2-file-group and it was downloaded too in one cycle (one call of handleTask).
 
     // Verify step1-file-group.
-    ClientFileGroup clientFileGroup =
-        getAndVerifyClientFileGroup(mobileDataDownload, "step1-file-group", 1);
+    ClientFileGroup clientFileGroup = getAndVerifyClientFileGroup("step1-file-group", 1);
     verifyClientFile(clientFileGroup.getFile(0), "step1_id", 57);
 
     // Verify step2-file-group.
-    clientFileGroup = getAndVerifyClientFileGroup(mobileDataDownload, "step2-file-group", 1);
+    clientFileGroup = getAndVerifyClientFileGroup("step2-file-group", 1);
     verifyClientFile(clientFileGroup.getFile(0), "step2_id", 13);
-
-    mobileDataDownload.clear().get();
   }
 
   @Test
   public void download_relativeFilePaths_createsSymlinks() throws Exception {
     AndroidUriAdapter adapter = AndroidUriAdapter.forContext(context);
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(
-            () -> new TestFileDownloader(TEST_DATA_RELATIVE_PATH, fileStorage, CONTROL_EXECUTOR),
-            new TestFileGroupPopulator(context));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .build();
 
     DataFileGroup fileGroup =
         DataFileGroup.newBuilder()
@@ -686,21 +859,21 @@ public class MobileDataDownloadIntegrationTest {
 
     mobileDataDownload
         .addFileGroup(AddFileGroupRequest.newBuilder().setDataFileGroup(fileGroup).build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     mobileDataDownload
         .downloadFileGroup(
             DownloadFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
-    // verify symlink structure
+    // verify symlink structure, we can't get access to the full internal file uri, but we can tell
+    // the start of it
     Uri expectedFileUri =
         DirectoryUtil.getBaseDownloadDirectory(context, Optional.absent())
             .buildUpon()
             .appendPath(DirectoryUtil.MDD_STORAGE_SYMLINKS)
             .appendPath(DirectoryUtil.MDD_STORAGE_ALL_GOOGLE_APPS)
             .appendPath(FILE_GROUP_NAME)
-            .appendPath("relative_path")
             .build();
     // we can't get access to the full internal target file uri, but we know the start of it
     Uri expectedStartTargetUri =
@@ -713,7 +886,7 @@ public class MobileDataDownloadIntegrationTest {
     ClientFileGroup clientFileGroup =
         mobileDataDownload
             .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-            .get();
+            .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     Uri fileUri = Uri.parse(clientFileGroup.getFile(0).getFileUri());
     Uri targetUri =
@@ -721,7 +894,7 @@ public class MobileDataDownloadIntegrationTest {
             .fromAbsolutePath(readlink(adapter.toFile(fileUri).getAbsolutePath()))
             .build();
 
-    assertThat(fileUri).isEqualTo(expectedFileUri);
+    assertThat(fileUri.toString()).contains(expectedFileUri.toString());
     assertThat(targetUri.toString()).contains(expectedStartTargetUri.toString());
     assertThat(fileStorage.exists(fileUri)).isTrue();
     assertThat(fileStorage.exists(targetUri)).isTrue();
@@ -729,10 +902,15 @@ public class MobileDataDownloadIntegrationTest {
 
   @Test
   public void remove_relativeFilePaths_removesSymlinks() throws Exception {
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(
-            () -> new TestFileDownloader(TEST_DATA_RELATIVE_PATH, fileStorage, CONTROL_EXECUTOR),
-            new TestFileGroupPopulator(context));
+    mobileDataDownload =
+        builderForTest()
+            .setFileDownloaderSupplier(
+                () ->
+                    new TestFileDownloader(
+                        TEST_DATA_RELATIVE_PATH,
+                        fileStorage,
+                        MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR)))
+            .build();
 
     DataFileGroup fileGroup =
         DataFileGroup.newBuilder()
@@ -752,17 +930,17 @@ public class MobileDataDownloadIntegrationTest {
 
     mobileDataDownload
         .addFileGroup(AddFileGroupRequest.newBuilder().setDataFileGroup(fileGroup).build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     mobileDataDownload
         .downloadFileGroup(
             DownloadFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     ClientFileGroup clientFileGroup =
         mobileDataDownload
             .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-            .get();
+            .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     Uri fileUri = Uri.parse(clientFileGroup.getFile(0).getFileUri());
 
@@ -771,71 +949,82 @@ public class MobileDataDownloadIntegrationTest {
 
     mobileDataDownload
         .removeFileGroup(RemoveFileGroupRequest.newBuilder().setGroupName(FILE_GROUP_NAME).build())
-        .get();
+        .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     // Verify that file uri still exists even though file group is stale
     assertThat(fileStorage.exists(fileUri)).isTrue();
 
-    mobileDataDownload.maintenance().get();
+    mobileDataDownload.maintenance().get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
 
     // Verify that file uri gets removed, once maintenance runs
-    assertThat(fileStorage.exists(fileUri)).isFalse();
+    if (flags.mddEnableGarbageCollection()) {
+      // cl/439051122 created a temporary FALSE override targeted to ASGA devices. This test only
+      // makes sense if the flag is true, but all_on testing doesn't respect diversion criteria in
+      // the launch. So we skip it for now.
+      // TODO(b/226551373): remove this once AsgaDisableMddLibGcLaunch is turned down
+      assertThat(fileStorage.exists(fileUri)).isFalse();
+    }
   }
 
-  // TODO: Improve this helper by getting rid of the need to new arrays when invoking
-  // and unnamed params. Something along this line:
-  // createDataFileGroup(name,package).addFile(..).addFile()...
-  // A helper function to create a DataFilegroup.
-  public static DataFileGroup createDataFileGroup(
-      String groupName,
-      String ownerPackage,
-      String[] fileId,
-      int[] byteSize,
-      String[] checksum,
-      ChecksumType[] checksumType,
-      String[] url,
-      DeviceNetworkPolicy deviceNetworkPolicy) {
-    if (fileId.length != byteSize.length
-        || fileId.length != checksum.length
-        || fileId.length != url.length
-        || checksumType.length != fileId.length) {
-      throw new IllegalArgumentException();
+  @Test
+  public void handleTask_duplicateInvocations_logsDownloadCompleteOnce() throws Exception {
+    // Override the feature flag to log at 100%.
+    flags.mddDefaultSampleInterval = Optional.of(1);
+
+    TestFileDownloader testFileDownloader =
+        new TestFileDownloader(
+            TEST_DATA_RELATIVE_PATH,
+            fileStorage,
+            MoreExecutors.listeningDecorator(DOWNLOAD_EXECUTOR));
+    BlockingFileDownloader blockingFileDownloader =
+        new BlockingFileDownloader(DOWNLOAD_EXECUTOR, testFileDownloader);
+
+    Supplier<FileDownloader> fakeFileDownloaderSupplier = () -> blockingFileDownloader;
+
+    mobileDataDownload =
+        builderForTest().setFileDownloaderSupplier(fakeFileDownloaderSupplier).build();
+
+    // Use test populator to add the group as pending.
+    TestFileGroupPopulator populator = new TestFileGroupPopulator(context);
+    populator.refreshFileGroups(mobileDataDownload).get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
+
+    // Call handle task in non-blocking way and use blocking file downloader to let handleTask1 wait
+    // at the download stage
+    ListenableFuture<Void> handleTask1Future =
+        mobileDataDownload.handleTask(TaskScheduler.WIFI_CHARGING_PERIODIC_TASK);
+
+    blockingFileDownloader.waitForDownloadStarted();
+
+    ListenableFuture<Void> handleTask2Future =
+        mobileDataDownload.handleTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK);
+
+    // Trigger a complete so the download "completes" after both tasks have been started.
+    blockingFileDownloader.finishDownloading();
+
+    // Wait for both futures to complete so we can make assertions about the events logged
+    handleTask2Future.get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
+    handleTask1Future.get(MAX_HANDLE_TASK_WAIT_TIME_SECS, SECONDS);
+
+    // Check that group is downloaded.
+    ClientFileGroup unused = getAndVerifyClientFileGroup(FILE_GROUP_NAME, 1);
+
+    if (controlExecutorType.equals(ExecutorType.SINGLE_THREADED)) {
+      // Single-threaded executor step requires some time to allow logging to finish.
+      // TODO: Investigate whether TestingTaskBarrier can be used here to wait for
+      // executor become idle.
+      Thread.sleep(500);
     }
 
-    DataFileGroup.Builder dataFileGroupBuilder =
-        DataFileGroup.newBuilder()
-            .setGroupName(groupName)
-            .setOwnerPackage(ownerPackage)
-            .setDownloadConditions(
-                DownloadConditions.newBuilder().setDeviceNetworkPolicy(deviceNetworkPolicy));
-
-    for (int i = 0; i < fileId.length; ++i) {
-      DataFile file =
-          DataFile.newBuilder()
-              .setFileId(fileId[i])
-              .setByteSize(byteSize[i])
-              .setChecksum(checksum[i])
-              .setChecksumType(checksumType[i])
-              .setUrlToDownload(url[i])
-              .build();
-      dataFileGroupBuilder.addFile(file);
-    }
-
-    return dataFileGroupBuilder.build();
+    // Check that logger only logged 1 download complete event
+    ArgumentCaptor<MddLogData> logDataCompleteCaptor = ArgumentCaptor.forClass(MddLogData.class);
+    // 1007 is the tag number for MddClientEvent.Code.EVENT_CODE_UNSPECIFIED.
+    verify(mockLogger, times(1)).log(logDataCompleteCaptor.capture(), /* eventCode= */ eq(1007));
   }
 
-  private MobileDataDownload getMobileDataDownload(
-      Supplier<FileDownloader> fileDownloaderSupplier, FileGroupPopulator fileGroupPopulator) {
-    return getMobileDataDownloadBuilder(fileDownloaderSupplier, fileGroupPopulator).build();
-  }
-
-  private MobileDataDownloadBuilder getMobileDataDownloadBuilder(
-      Supplier<FileDownloader> fileDownloaderSupplier, FileGroupPopulator fileGroupPopulator) {
+  private MobileDataDownloadBuilder builderForTest() {
     return MobileDataDownloadBuilder.newBuilder()
         .setContext(context)
-        .setControlExecutor(CONTROL_EXECUTOR)
-        .setFileDownloaderSupplier(fileDownloaderSupplier)
-        .addFileGroupPopulator(fileGroupPopulator)
+        .setControlExecutor(controlExecutor)
         .setTaskScheduler(Optional.of(mockTaskScheduler))
         .setLoggerOptional(Optional.of(mockLogger))
         .setDeltaDecoderOptional(Optional.absent())
@@ -845,12 +1034,8 @@ public class MobileDataDownloadIntegrationTest {
   }
 
   /** Creates MDD object and triggers handleTask to refresh and download file groups. */
-  private MobileDataDownload getMobileDataDownloadAfterDownload(
-      Supplier<FileDownloader> fileDownloaderSupplier, FileGroupPopulator fileGroupPopulator)
+  private void waitForHandleTask()
       throws InterruptedException, ExecutionException, TimeoutException {
-    MobileDataDownload mobileDataDownload =
-        getMobileDataDownload(fileDownloaderSupplier, fileGroupPopulator);
-
     // This will trigger refreshing of FileGroupPopulators and downloading.
     mobileDataDownload
         .handleTask(TaskScheduler.CELLULAR_CHARGING_PERIODIC_TASK)
@@ -861,16 +1046,14 @@ public class MobileDataDownloadIntegrationTest {
     for (String line : debugString.split("\n", -1)) {
       Log.i(TAG, line);
     }
-    return mobileDataDownload;
   }
 
-  private static ClientFileGroup getAndVerifyClientFileGroup(
-      MobileDataDownload mobileDataDownload, String fileGroupName, int fileCount)
-      throws ExecutionException, InterruptedException {
+  private ClientFileGroup getAndVerifyClientFileGroup(String fileGroupName, int fileCount)
+      throws ExecutionException, TimeoutException, InterruptedException {
     ClientFileGroup clientFileGroup =
         mobileDataDownload
             .getFileGroup(GetFileGroupRequest.newBuilder().setGroupName(fileGroupName).build())
-            .get();
+            .get(MAX_MDD_API_WAIT_TIME_SECS, SECONDS);
     assertThat(clientFileGroup).isNotNull();
     assertThat(clientFileGroup.getGroupName()).isEqualTo(fileGroupName);
     assertThat(clientFileGroup.getFileCount()).isEqualTo(fileCount);

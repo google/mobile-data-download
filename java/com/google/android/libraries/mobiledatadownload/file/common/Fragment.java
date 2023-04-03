@@ -20,6 +20,7 @@ import static com.google.android.libraries.mobiledatadownload.file.common.intern
 import android.net.Uri;
 import android.text.TextUtils;
 import com.google.android.libraries.mobiledatadownload.file.common.internal.Preconditions;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -128,12 +129,14 @@ public final class Fragment {
     }
 
     /** Adds a param. If a param with same key already exists, this replaces it. */
+    @CanIgnoreReturnValue
     public Builder addParam(Param param) {
       addParam(param.toBuilder());
       return this;
     }
 
     /** Adds a param. If a param with the same key already exist, this replaces it. */
+    @CanIgnoreReturnValue
     public Builder addParam(Param.Builder param) {
       for (int i = 0; i < params.size(); i++) {
         if (params.get(i).key.equals(param.key)) {
@@ -146,6 +149,7 @@ public final class Fragment {
     }
 
     /** Adds a simple param with no value. */
+    @CanIgnoreReturnValue
     public Builder addParam(String key) {
       return addParam(Param.builder(key));
     }
@@ -266,6 +270,7 @@ public final class Fragment {
        * Adds a value to this param. If a value already exists with the same name, this will replace
        * it.
        */
+      @CanIgnoreReturnValue
       public Builder addValue(ParamValue value) {
         addValue(value.toBuilder());
         return this;
@@ -275,6 +280,7 @@ public final class Fragment {
        * Adds a value to this param. If a value already exists with the same name, this will replace
        * it.
        */
+      @CanIgnoreReturnValue
       public Builder addValue(ParamValue.Builder value) {
         for (int i = 0; i < values.size(); i++) {
           if (values.get(i).name.equals(value.name)) {
@@ -287,6 +293,7 @@ public final class Fragment {
       }
 
       /** Adds a value that has no subparams. Also replaces existing value if present. */
+      @CanIgnoreReturnValue
       public Builder addValue(String name) {
         return addValue(new ParamValue.Builder(name, null));
       }
@@ -434,6 +441,7 @@ public final class Fragment {
        * @param subparam
        * @return The subparam or null if not found.
        */
+      @CanIgnoreReturnValue
       public Builder addSubParam(SubParam subparam) {
         for (int i = 0; i < subparams.size(); i++) {
           if (subparams.get(i).key.equals(subparam.key)) {
@@ -452,6 +460,7 @@ public final class Fragment {
        * @param key The subparam key.
        * @param value The subparam value.
        */
+      @CanIgnoreReturnValue
       public Builder addSubParam(String key, String value) {
         return addSubParam(new SubParam(key, value));
       }

@@ -15,8 +15,11 @@
  */
 package com.google.android.libraries.mobiledatadownload.downloader.offroad;
 
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
+
 import android.net.Uri;
 import android.util.Pair;
+import com.google.android.downloader.CookieJar;
 import com.google.android.downloader.DownloadConstraints;
 import com.google.android.downloader.DownloadConstraints.NetworkType;
 import com.google.android.downloader.DownloadDestination;
@@ -38,6 +41,7 @@ import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentF
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.base.Strings;
+import com.google.common.base.Supplier;
 import com.google.common.util.concurrent.FluentFuture;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -58,10 +62,10 @@ public final class Offroad2FileDownloader implements FileDownloader {
   private final Executor downloadExecutor;
   private final DownloadMetadataStore downloadMetadataStore;
   private final ExceptionHandler exceptionHandler;
+  private final Optional<Supplier<CookieJar>> cookieJarSupplierOptional;
   private final Optional<Integer> defaultTrafficTag;
   @Nullable private final OAuthTokenProvider authTokenProvider;
 
-  // TODO(b/208703042): refactor injection to remove dependency on ProtoDataStore
   public Offroad2FileDownloader(
       Downloader downloader,
       SynchronousFileStorage fileStorage,
@@ -69,6 +73,7 @@ public final class Offroad2FileDownloader implements FileDownloader {
       @Nullable OAuthTokenProvider authTokenProvider,
       DownloadMetadataStore downloadMetadataStore,
       ExceptionHandler exceptionHandler,
+      Optional<Supplier<CookieJar>> cookieJarSupplierOptional,
       Optional<Integer> defaultTrafficTag) {
     this.downloader = downloader;
     this.fileStorage = fileStorage;
@@ -76,6 +81,7 @@ public final class Offroad2FileDownloader implements FileDownloader {
     this.authTokenProvider = authTokenProvider;
     this.downloadMetadataStore = downloadMetadataStore;
     this.exceptionHandler = exceptionHandler;
+    this.cookieJarSupplierOptional = cookieJarSupplierOptional;
     this.defaultTrafficTag = defaultTrafficTag;
   }
 
@@ -148,8 +154,12 @@ public final class Offroad2FileDownloader implements FileDownloader {
       throws DownloadException {
     try {
       // Create DownloadDestination using mobstore
+      // NOTE: the use of DirectExecutor here should be fine since all async operations
+      // of DownloadDestination happen within Downloader2 IOExecutor. Consider replacing this with
+      // lightweight executor.
       return fileStorage.open(
-          destinationUri, DownloadDestinationOpener.create(downloadMetadataStore));
+          destinationUri,
+          DownloadDestinationOpener.create(downloadMetadataStore, directExecutor()));
     } catch (IOException e) {
       if (e instanceof MalformedUriException || e.getCause() instanceof IllegalArgumentException) {
         LogUtil.e("%s: The file uri is invalid, uri = %s", TAG, destinationUri);
@@ -177,6 +187,10 @@ public final class Offroad2FileDownloader implements FileDownloader {
     DownloadRequest.Builder requestBuilder =
         downloader.newRequestBuilder(
             URI.create(fileDownloaderRequest.urlToDownload()), downloadDestination);
+
+    if (cookieJarSupplierOptional.isPresent()) {
+      requestBuilder.setCookieJar(cookieJarSupplierOptional.get().get());
+    }
 
     requestBuilder.setOAuthTokenProvider(authTokenProvider);
 

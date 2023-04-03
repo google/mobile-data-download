@@ -21,6 +21,7 @@ import com.google.android.libraries.mobiledatadownload.file.spi.Transform;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import javax.annotation.Nullable;
 
 /**
  * This is a toy transform that is useful to illustrate that the invocation order is correct when
@@ -59,7 +60,7 @@ public final class CapitalizationTransform implements Transform {
     }
 
     @Override
-    public Long size() throws IOException {
+    public @Nullable Long size() throws IOException {
       if (!(in instanceof Sizable)) {
         return null;
       }

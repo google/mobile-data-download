@@ -25,12 +25,12 @@ import java.util.Random;
 import javax.annotation.Nullable;
 
 /** Utility class for logging with the "MDD" tag. */
-@CanIgnoreReturnValue
 public class LogUtil {
   public static final String TAG = "MDD";
 
   private static final Random random = new Random();
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   public static int getLogPriority() {
     int level = Log.ASSERT;
     while (level > Log.VERBOSE) {
@@ -42,6 +42,7 @@ public class LogUtil {
     return level;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   public static int v(String msg) {
     if (Log.isLoggable(TAG, Log.VERBOSE)) {
       return Log.v(TAG, msg);
@@ -49,6 +50,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int v(@FormatString String format, Object obj0) {
     if (Log.isLoggable(TAG, Log.VERBOSE)) {
@@ -58,6 +60,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int v(@FormatString String format, Object obj0, Object obj1) {
     if (Log.isLoggable(TAG, Log.VERBOSE)) {
@@ -67,6 +70,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int v(@FormatString String format, Object... params) {
     if (Log.isLoggable(TAG, Log.VERBOSE)) {
@@ -76,6 +80,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   public static int d(String msg) {
     if (Log.isLoggable(TAG, Log.DEBUG)) {
       return Log.d(TAG, msg);
@@ -83,6 +88,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int d(@FormatString String format, Object obj0) {
     if (Log.isLoggable(TAG, Log.DEBUG)) {
@@ -92,6 +98,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int d(@FormatString String format, Object obj0, Object obj1) {
     if (Log.isLoggable(TAG, Log.DEBUG)) {
@@ -101,6 +108,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int d(@FormatString String format, Object... params) {
     if (Log.isLoggable(TAG, Log.DEBUG)) {
@@ -110,6 +118,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int d(@Nullable Throwable tr, @FormatString String format, Object... params) {
     if (Log.isLoggable(TAG, Log.DEBUG)) {
@@ -119,6 +128,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   public static int i(String msg) {
     if (Log.isLoggable(TAG, Log.INFO)) {
       return Log.i(TAG, msg);
@@ -126,6 +136,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int i(@FormatString String format, Object obj0) {
     if (Log.isLoggable(TAG, Log.INFO)) {
@@ -135,6 +146,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int i(@FormatString String format, Object obj0, Object obj1) {
     if (Log.isLoggable(TAG, Log.INFO)) {
@@ -144,6 +156,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int i(@FormatString String format, Object... params) {
     if (Log.isLoggable(TAG, Log.INFO)) {
@@ -153,6 +166,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   public static int e(String msg) {
     if (Log.isLoggable(TAG, Log.ERROR)) {
       return Log.e(TAG, msg);
@@ -160,6 +174,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int e(@FormatString String format, Object obj0) {
     if (Log.isLoggable(TAG, Log.ERROR)) {
@@ -169,6 +184,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int e(@FormatString String format, Object obj0, Object obj1) {
     if (Log.isLoggable(TAG, Log.ERROR)) {
@@ -178,6 +194,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int e(@FormatString String format, Object... params) {
     if (Log.isLoggable(TAG, Log.ERROR)) {
@@ -187,6 +204,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @SuppressLint("LogTagMismatch")
   public static int e(@Nullable Throwable tr, String msg) {
     if (Log.isLoggable(TAG, Log.ERROR)) {
@@ -201,11 +219,13 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int e(@Nullable Throwable tr, @FormatString String format, Object... params) {
     return Log.isLoggable(TAG, Log.ERROR) ? e(tr, format(format, params)) : 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   public static int w(String msg) {
     if (Log.isLoggable(TAG, Log.WARN)) {
       return Log.w(TAG, msg);
@@ -213,6 +233,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int w(@FormatString String format, Object obj0) {
     if (Log.isLoggable(TAG, Log.WARN)) {
@@ -222,6 +243,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int w(@FormatString String format, Object obj0, Object obj1) {
     if (Log.isLoggable(TAG, Log.WARN)) {
@@ -231,6 +253,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   public static int w(@FormatString String format, Object... params) {
     if (Log.isLoggable(TAG, Log.WARN)) {
@@ -240,6 +263,7 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @SuppressLint("LogTagMismatch")
   @FormatMethod
   public static int w(@Nullable Throwable tr, @FormatString String format, Object... params) {
@@ -256,11 +280,13 @@ public class LogUtil {
     return 0;
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   @FormatMethod
   private static String format(@FormatString String format, Object... args) {
     return String.format(Locale.US, format, args);
   }
 
+  @CanIgnoreReturnValue // pushed down from class to method; see <internal>
   public static boolean shouldSampleInterval(long sampleInterval) {
     if (sampleInterval <= 0L) {
       if (sampleInterval < 0L) {

@@ -18,6 +18,7 @@ package com.google.android.libraries.mobiledatadownload.file.openers;
 import com.google.android.libraries.mobiledatadownload.file.Behavior;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.IOException;
 import java.io.OutputStream;
 
@@ -37,6 +38,7 @@ public final class WriteByteArrayOpener implements Opener<Void> {
     this.bytesToWrite = bytesToWrite;
   }
 
+  @CanIgnoreReturnValue
   public WriteByteArrayOpener withBehaviors(Behavior... behaviors) {
     this.behaviors = behaviors;
     return this;

@@ -17,10 +17,11 @@ package com.google.android.libraries.mobiledatadownload;
 
 import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
 
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Preconditions;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 
 /** Thrown when there is a download failure. */
 public final class DownloadException extends Exception {
@@ -171,18 +172,21 @@ public final class DownloadException extends Exception {
     private Throwable cause;
 
     /** Sets the {@link DownloadResultCode}. */
+    @CanIgnoreReturnValue
     public Builder setDownloadResultCode(DownloadResultCode downloadResultCode) {
       this.downloadResultCode = downloadResultCode;
       return this;
     }
 
     /** Sets the error message. */
+    @CanIgnoreReturnValue
     public Builder setMessage(String message) {
       this.message = message;
       return this;
     }
 
     /** Sets the cause of the exception. */
+    @CanIgnoreReturnValue
     public Builder setCause(Throwable cause) {
       this.cause = cause;
       return this;
@@ -213,7 +217,7 @@ public final class DownloadException extends Exception {
    */
   public static <T> ListenableFuture<T> wrapIfFailed(
       ListenableFuture<T> future, DownloadResultCode code, String message) {
-    return Futures.catchingAsync(
+    return PropagatedFutures.catchingAsync(
         future,
         Throwable.class,
         (Throwable t) -> immediateFailedFuture(wrap(t, code, message)),

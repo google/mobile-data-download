@@ -24,6 +24,7 @@ import com.google.android.libraries.mobiledatadownload.file.common.internal.Lite
 import com.google.android.libraries.mobiledatadownload.file.common.internal.Preconditions;
 import com.google.android.libraries.mobiledatadownload.file.transforms.TransformProtos;
 import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.mobiledatadownload.TransformProto;
 import java.io.File;
 import java.util.Arrays;
@@ -149,42 +150,51 @@ public final class AndroidUri {
     /**
      * Sets the package to use in the android uri AUTHORITY. Default is context.getPackageName().
      */
+    @CanIgnoreReturnValue
     public Builder setPackage(String packageName) {
       this.packageName = packageName;
       return this;
     }
 
+    @CanIgnoreReturnValue
     private Builder setLocation(String location) {
       AndroidUri.validateLocation(location);
       this.location = location;
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder setManagedLocation() {
       return setLocation(MANAGED_LOCATION);
     }
 
+    @CanIgnoreReturnValue
     public Builder setExternalLocation() {
       return setLocation(EXTERNAL_LOCATION);
     }
 
+    @CanIgnoreReturnValue
     public Builder setDirectBootFilesLocation() {
       return setLocation(DIRECT_BOOT_FILES_LOCATION);
     }
 
+    @CanIgnoreReturnValue
     public Builder setDirectBootCacheLocation() {
       return setLocation(DIRECT_BOOT_CACHE_LOCATION);
     }
 
     /** Internal location, aka "files", is the default location. */
+    @CanIgnoreReturnValue
     public Builder setInternalLocation() {
       return setLocation(FILES_LOCATION);
     }
 
+    @CanIgnoreReturnValue
     public Builder setCacheLocation() {
       return setLocation(CACHE_LOCATION);
     }
 
+    @CanIgnoreReturnValue
     public Builder setModule(String module) {
       AndroidUri.validateModule(module);
       this.module = module;
@@ -210,6 +220,7 @@ public final class AndroidUri {
      * @param account The account to set.
      * @return The fluent Builder.
      */
+    @CanIgnoreReturnValue
     public Builder setAccount(Account account) {
       AccountSerialization.serialize(account); // performs validation internally
       this.account = account;
@@ -220,6 +231,7 @@ public final class AndroidUri {
      * Sets the component of the path after location, module and account. A single leading slash
      * will be trimmed if present.
      */
+    @CanIgnoreReturnValue
     public Builder setRelativePath(String relativePath) {
       if (relativePath.startsWith("/")) {
         relativePath = relativePath.substring(1);
@@ -233,6 +245,7 @@ public final class AndroidUri {
      * Updates builder with multiple fields from file param: location, module, account and relative
      * path. This method will fail on "managed" paths (see {@link fromFile(File, AccountManager)}).
      */
+    @CanIgnoreReturnValue
     public Builder fromFile(File file) {
       return fromAbsolutePath(file.getAbsolutePath(), /* accountManager= */ null);
     }
@@ -241,6 +254,7 @@ public final class AndroidUri {
      * Updates builder with multiple fields from file param: location, module, account and relative
      * path. A non-null {@code accountManager} is required to handle "managed" paths.
      */
+    @CanIgnoreReturnValue
     public Builder fromFile(File file, @Nullable AccountManager accountManager) {
       return fromAbsolutePath(file.getAbsolutePath(), accountManager);
     }
@@ -250,6 +264,7 @@ public final class AndroidUri {
      * relative path. This method will fail on "managed" paths (see {@link fromAbsolutePath(String,
      * AccountManager)}).
      */
+    @CanIgnoreReturnValue
     public Builder fromAbsolutePath(String absolutePath) {
       return fromAbsolutePath(absolutePath, /* accountManager= */ null);
     }
@@ -259,6 +274,7 @@ public final class AndroidUri {
      * relative path. A non-null {@code accountManager} is required to handle "managed" paths.
      */
     // TODO(b/129467051): remove requirement for segments after 0th (logical location)
+    @CanIgnoreReturnValue
     public Builder fromAbsolutePath(String absolutePath, @Nullable AccountManager accountManager) {
       // Get the file's path within internal files, /module/account</relativePath>
       File filesDir = AndroidFileEnvironment.getFilesDirWithPreNWorkaround(context);
@@ -341,6 +357,7 @@ public final class AndroidUri {
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder withTransform(TransformProto.Transform spec) {
       encodedSpecs.add(TransformProtos.toEncodedSpec(spec));
       return this;

@@ -28,6 +28,8 @@ import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 import com.google.mobiledatadownload.TransformProto.Transform;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile.AndroidSharingType;
@@ -51,9 +53,7 @@ public class FileGroupUtil {
         : TimeUnit.SECONDS.toMillis(fileGroup.getExpirationDateSecs());
   }
 
-  /**
-   * @return the expiration date of this stale file group in millis
-   */
+  /** Returns the expiration date of this stale file group in millis. */
   public static long getStaleExpirationDateMillis(DataFileGroupInternal fileGroup) {
     return TimeUnit.SECONDS.toMillis(fileGroup.getBookkeeping().getStaleExpirationDate());
   }
@@ -151,6 +151,29 @@ public class FileGroupUtil {
     return dataFileGroup;
   }
 
+  /** Sets the isolated root if the file group supports isolated structures. */
+  public static DataFileGroupInternal maybeSetIsolatedRoot(
+      DataFileGroupInternal dataFileGroup, GroupKey groupKey) {
+    // Check if isolated structure is allowed before adding the root
+    if (!isIsolatedStructureAllowed(dataFileGroup)) {
+      return dataFileGroup;
+    }
+
+    Hasher isolatedRootHasher =
+        Hashing.sha256()
+            .newHasher()
+            .putUnencodedChars(dataFileGroup.getVariantId())
+            .putUnencodedChars(MddConstants.SPLIT_CHAR)
+            .putUnencodedChars(groupKey.getAccount())
+            .putUnencodedChars(MddConstants.SPLIT_CHAR)
+            .putLong(dataFileGroup.getBuildId());
+
+    String hash = isolatedRootHasher.hash().toString();
+    String directoryRoot = String.format("%s_%s", dataFileGroup.getGroupName(), hash);
+
+    return dataFileGroup.toBuilder().setIsolatedDirectoryRoot(directoryRoot).build();
+  }
+
   /** Shared method to test whether the given file group supports isolated file structures. */
   public static boolean isIsolatedStructureAllowed(DataFileGroupInternal dataFileGroupInternal) {
     if (VERSION.SDK_INT < VERSION_CODES.LOLLIPOP
@@ -174,10 +197,20 @@ public class FileGroupUtil {
    */
   public static Uri getIsolatedRootDirectory(
       Context context, Optional<String> instanceId, DataFileGroupInternal fileGroupInternal) {
+    String groupRoot;
+    if (!fileGroupInternal.getIsolatedDirectoryRoot().isEmpty()) {
+      groupRoot = fileGroupInternal.getIsolatedDirectoryRoot();
+    } else {
+      // NOTE: Only the group name was used before the isolated directory root field was
+      // added. To preserve backwards compatibility, fallback to group name if isolated directory
+      // root is not present.
+      groupRoot = fileGroupInternal.getGroupName();
+    }
+
     return DirectoryUtil.getDownloadSymlinkDirectory(
             context, fileGroupInternal.getAllowedReadersEnum(), instanceId)
         .buildUpon()
-        .appendPath(fileGroupInternal.getGroupName())
+        .appendPath(groupRoot)
         .build();
   }
 
@@ -190,8 +223,13 @@ public class FileGroupUtil {
       Optional<String> instanceId,
       DataFile dataFile,
       DataFileGroupInternal parentFileGroup) {
-    Uri.Builder fileUriBuilder =
-        getIsolatedRootDirectory(context, instanceId, parentFileGroup).buildUpon();
+    Uri rootUri = getIsolatedRootDirectory(context, instanceId, parentFileGroup);
+    return appendIsolatedFileUri(rootUri, dataFile);
+  }
+
+  /** Helper method to append isolated file uri to an already known root. */
+  public static Uri appendIsolatedFileUri(Uri rootUri, DataFile dataFile) {
+    Uri.Builder fileUriBuilder = rootUri.buildUpon();
     if (dataFile.getRelativeFilePath().isEmpty()) {
       // If no relative path specified get the last segment from the
       // urlToDownload.
@@ -223,7 +261,8 @@ public class FileGroupUtil {
     Uri isolatedRootDir =
         FileGroupUtil.getIsolatedRootDirectory(context, instanceId, dataFileGroup);
     if (fileStorage.exists(isolatedRootDir)) {
-      Void unused = fileStorage.open(isolatedRootDir, RecursiveDeleteOpener.create());
+      Void unused =
+          fileStorage.open(isolatedRootDir, RecursiveDeleteOpener.create().withNoFollowLinks());
     }
   }
 
@@ -257,24 +296,29 @@ public class FileGroupUtil {
 
   public static boolean isSideloadedFile(DataFile dataFile) {
     return isFileWithMatchingScheme(
-        dataFile,
+        dataFile.getUrlToDownload(),
         ImmutableSet.of(
             MddConstants.SIDELOAD_FILE_URL_SCHEME, MddConstants.EMBEDDED_ASSET_URL_SCHEME));
   }
 
   public static boolean isInlineFile(DataFile dataFile) {
-    return isFileWithMatchingScheme(dataFile, ImmutableSet.of(MddConstants.INLINE_FILE_URL_SCHEME));
+    return isFileWithMatchingScheme(
+        dataFile.getUrlToDownload(), ImmutableSet.of(MddConstants.INLINE_FILE_URL_SCHEME));
+  }
+
+  public static boolean isInlineFile(String url) {
+    return isFileWithMatchingScheme(url, ImmutableSet.of(MddConstants.INLINE_FILE_URL_SCHEME));
   }
 
   // Helper method to test whether a DataFile's url scheme is contained in the given scheme set.
-  private static boolean isFileWithMatchingScheme(DataFile dataFile, ImmutableSet<String> schemes) {
-    if (!dataFile.hasUrlToDownload()) {
+  private static boolean isFileWithMatchingScheme(String url, ImmutableSet<String> schemes) {
+    if (url.isEmpty()) {
       return false;
     }
-    int colon = dataFile.getUrlToDownload().indexOf(':');
+    int colon = url.indexOf(':');
     // TODO(b/196593240): Ensure this is always handled, or replace with a checked exception
-    Preconditions.checkState(colon > -1, "Invalid url: %s", dataFile.getUrlToDownload());
-    String fileScheme = dataFile.getUrlToDownload().substring(0, colon);
+    Preconditions.checkState(colon > -1, "Invalid url: %s", url);
+    String fileScheme = url.substring(0, colon);
     for (String scheme : schemes) {
       if (Ascii.equalsIgnoreCase(fileScheme, scheme)) {
         return true;

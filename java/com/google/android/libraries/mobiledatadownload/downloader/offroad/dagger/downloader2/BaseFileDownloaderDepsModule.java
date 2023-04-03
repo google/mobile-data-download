@@ -15,11 +15,15 @@
  */
 package com.google.android.libraries.mobiledatadownload.downloader.offroad.dagger.downloader2;
 
-import androidx.annotation.VisibleForTesting;
+import com.google.android.downloader.CookieJar;
 import com.google.android.downloader.UrlEngine;
 import com.google.android.libraries.mobiledatadownload.downloader.offroad.ExceptionHandler;
+import com.google.android.libraries.mobiledatadownload.downloader.offroad.annotations.DownloaderFollowRedirectsImmediately;
+import com.google.common.base.Optional;
+import com.google.common.base.Supplier;
 import dagger.BindsOptionalOf;
 import dagger.Module;
+import dagger.Provides;
 
 /**
  * Dagger module for providing the common depenendecies of FileDownloaders backed by Android
@@ -30,7 +34,6 @@ import dagger.Module;
  * used across all FileDownloaders backed by Android Downloader2.
  */
 @Module
-@VisibleForTesting
 public abstract class BaseFileDownloaderDepsModule {
 
   /**
@@ -48,6 +51,25 @@ public abstract class BaseFileDownloaderDepsModule {
    */
   @BindsOptionalOf
   abstract UrlEngine platformSpecificUrlEngine();
+
+  /**
+   * Optional {@link CookieJar} which will be supplied to each download request.
+   *
+   * <p>If no cookie jar is provided, no cookie handling will be performed.
+   *
+   * <p>NOTE: CookieJar support is only available for Cronet at this time. // TODO(b/254955843): Add
+   * support for platform/okhttp2/okhttp3 engines
+   */
+  @BindsOptionalOf
+  abstract Supplier<CookieJar> requestCookieJarSupplier();
+
+  /** Calculate whether or not we should follow redirects immediately. */
+  @Provides
+  @DownloaderFollowRedirectsImmediately
+  static boolean provideFollowRedirectsImmediatelyFlag(
+      Optional<Supplier<CookieJar>> cookieJarSupplier) {
+    return !cookieJarSupplier.isPresent();
+  }
 
   private BaseFileDownloaderDepsModule() {}
 }

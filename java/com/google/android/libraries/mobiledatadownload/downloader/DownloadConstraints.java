@@ -17,6 +17,7 @@ package com.google.android.libraries.mobiledatadownload.downloader;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableSet;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -107,6 +108,7 @@ public abstract class DownloadConstraints {
 
     abstract ImmutableSet.Builder<NetworkType> requiredNetworkTypesBuilder();
 
+    @CanIgnoreReturnValue
     public final Builder addRequiredNetworkType(NetworkType networkType) {
       requiredNetworkTypesBuilder().add(networkType);
       return this;

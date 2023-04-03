@@ -22,6 +22,7 @@ import android.util.Pair;
 import com.google.android.libraries.mobiledatadownload.file.common.MalformedUriException;
 import com.google.android.libraries.mobiledatadownload.file.common.internal.Preconditions;
 import com.google.android.libraries.mobiledatadownload.file.spi.Backend;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -39,7 +40,7 @@ import java.io.InputStream;
  *
  * <p>NOTE: In most cases, you'll want to use the GmsClientBackend for accessing files from GMS
  * core. This backend is used to access files from other Apps. Since there are possible security
- * concerns with doing so, ContentResolverBackend is restricted to the "content_resolver_allowlist".
+ * concerns with doing so, ContentResolverBackend is restricted to the "content_resolver_whitelist".
  * See <internal> for more information.
  */
 public final class ContentResolverBackend implements Backend {
@@ -67,6 +68,7 @@ public final class ContentResolverBackend implements Backend {
      * Tells whether this backend is expected to be embedded in another backend. If so, rewrites the
      * scheme to "content"; if not, requires that the scheme be "content".
      */
+    @CanIgnoreReturnValue
     public Builder setEmbedded(boolean isEmbedded) {
       this.isEmbedded = isEmbedded;
       return this;

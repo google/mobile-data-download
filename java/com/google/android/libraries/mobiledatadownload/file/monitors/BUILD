@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -23,7 +24,5 @@ package(
 android_library(
     name = "monitors",
     srcs = ["ByteCountingOutputMonitor.java"],
-    deps = [
-        "//java/com/google/android/libraries/mobiledatadownload/file/spi",
-    ],
+    deps = ["//java/com/google/android/libraries/mobiledatadownload/file/spi"],
 )

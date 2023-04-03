@@ -153,6 +153,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -175,6 +176,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_featureOff() {
     flags.enableZipFolder = Optional.of(false);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -197,6 +199,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_noDownloadFileChecksum() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -218,6 +221,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_targetOneFile() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =
@@ -241,6 +245,7 @@ public class DataFileGroupValidatorTest {
   @Test
   public void testAddGroupForDownload_zip_moreThanOneTransforms() {
     flags.enableZipFolder = Optional.of(true);
+
     Migrations.setCurrentVersion(context, FileKeyVersion.USE_CHECKSUM_ONLY);
     Migrations.setMigratedToNewFileKey(context, true);
     DataFileGroupInternal.Builder fileGroupBuilder =

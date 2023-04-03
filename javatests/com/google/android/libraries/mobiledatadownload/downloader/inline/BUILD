@@ -14,6 +14,7 @@
 load("//javatests/com/google/android/libraries/mobiledatadownload:test_defs.bzl", "mdd_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -31,7 +32,6 @@ mdd_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing:fake_file_backend",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
-        "@androidx_test",
         "@com_google_guava_guava",
         "@com_google_protobuf//:protobuf_lite",
         "@truth",

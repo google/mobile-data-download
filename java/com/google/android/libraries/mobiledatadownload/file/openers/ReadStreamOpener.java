@@ -18,6 +18,7 @@ package com.google.android.libraries.mobiledatadownload.file.openers;
 import com.google.android.libraries.mobiledatadownload.file.Behavior;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,6 +36,7 @@ public final class ReadStreamOpener implements Opener<InputStream> {
     return new ReadStreamOpener();
   }
 
+  @CanIgnoreReturnValue
   public ReadStreamOpener withBehaviors(Behavior... behaviors) {
     this.behaviors = behaviors;
     return this;
@@ -48,6 +50,7 @@ public final class ReadStreamOpener implements Opener<InputStream> {
    *
    * <p>Discouraged: protos (already buffered internally).
    */
+  @CanIgnoreReturnValue
   public ReadStreamOpener withBufferedIo() {
     this.bufferIo = true;
     return this;

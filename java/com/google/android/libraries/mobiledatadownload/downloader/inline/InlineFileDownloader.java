@@ -16,6 +16,8 @@
 package com.google.android.libraries.mobiledatadownload.downloader.inline;
 
 import static com.google.android.libraries.mobiledatadownload.internal.MddConstants.INLINE_FILE_URL_SCHEME;
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
@@ -26,8 +28,8 @@ import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStora
 import com.google.android.libraries.mobiledatadownload.file.openers.ReadStreamOpener;
 import com.google.android.libraries.mobiledatadownload.file.openers.WriteStreamOpener;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.io.ByteStreams;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import java.io.IOException;
 import java.io.InputStream;
@@ -67,7 +69,7 @@ public final class InlineFileDownloader implements FileDownloader {
       LogUtil.e(
           "%s: Invalid url given, expected to start with 'inlinefile:', but was %s",
           TAG, downloadRequest.urlToDownload());
-      return Futures.immediateFailedFuture(
+      return immediateFailedFuture(
           DownloadException.builder()
               .setDownloadResultCode(DownloadResultCode.INVALID_INLINE_FILE_URL_SCHEME)
               .setMessage("InlineFileDownloader only supports copying inlinefile: scheme")
@@ -78,7 +80,7 @@ public final class InlineFileDownloader implements FileDownloader {
     InlineDownloadParams inlineDownloadParams =
         downloadRequest.inlineDownloadParamsOptional().get();
 
-    return Futures.submitAsync(
+    return PropagatedFutures.submitAsync(
         () -> {
           try (InputStream inlineFileStream = getInputStream(inlineDownloadParams);
               OutputStream destinationStream =
@@ -87,13 +89,13 @@ public final class InlineFileDownloader implements FileDownloader {
             destinationStream.flush();
           } catch (IOException e) {
             LogUtil.e(e, "%s: Unable to copy file content.", TAG);
-            return Futures.immediateFailedFuture(
+            return immediateFailedFuture(
                 DownloadException.builder()
                     .setCause(e)
                     .setDownloadResultCode(DownloadResultCode.INLINE_FILE_IO_ERROR)
                     .build());
           }
-          return Futures.immediateVoidFuture();
+          return immediateVoidFuture();
         },
         downloadExecutor);
   }

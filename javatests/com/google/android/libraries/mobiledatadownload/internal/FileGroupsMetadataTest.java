@@ -20,11 +20,16 @@ import static com.google.common.truth.Truth.assertWithMessage;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.util.Pair;
+import android.net.Uri;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
+import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
+import com.google.mobiledatadownload.internal.MetadataProto.GroupKeyProperties;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
+import com.google.android.libraries.mobiledatadownload.file.backends.AndroidUri;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUtil;
@@ -37,9 +42,6 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKeyProperties;
 import java.io.File;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -98,7 +100,10 @@ public class FileGroupsMetadataTest {
   private Context context;
   private FakeTimeSource testClock;
   private FileGroupsMetadata fileGroupsMetadata;
+  private Uri destinationUri;
+  private Uri diagnosticUri;
   private final TestFlags flags = new TestFlags();
+
   @Mock EventLogger mockLogger;
   @Mock SilentFeedback mockSilentFeedback;
 
@@ -134,6 +139,16 @@ public class FileGroupsMetadataTest {
         new SynchronousFileStorage(Arrays.asList(AndroidFileBackend.builder(context).build()));
 
     testClock = new FakeTimeSource();
+    destinationUri =
+        AndroidUri.builder(context)
+            .setPackage(context.getPackageName())
+            .setRelativePath("dest.pb")
+            .build();
+    diagnosticUri =
+        AndroidUri.builder(context)
+            .setPackage(context.getPackageName())
+            .setRelativePath("diag.pb")
+            .build();
     SharedPreferencesFileGroupsMetadata sharedPreferencesImpl =
         new SharedPreferencesFileGroupsMetadata(
             context, testClock, mockSilentFeedback, instanceId, CONTROL_EXECUTOR);
@@ -146,12 +161,18 @@ public class FileGroupsMetadataTest {
 
   @After
   public void tearDown() throws Exception {
+    if (fileStorage.exists(diagnosticUri)) {
+      fileStorage.deleteFile(diagnosticUri);
+    }
+    if (fileStorage.exists(destinationUri)) {
+      fileStorage.deleteFile(destinationUri);
+    }
     fileGroupsMetadata.clear().get();
   }
 
   @Test
   public void serializeAndDeserializeFileGroupKey() throws Exception {
-    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(testKey, context);
+    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(testKey);
     GroupKey deserializedGroupKey = FileGroupsMetadataUtil.deserializeGroupKey(serializedGroupKey);
 
     assertThat(deserializedGroupKey.getGroupName()).isEqualTo(TEST_GROUP);
@@ -326,8 +347,7 @@ public class FileGroupsMetadataTest {
       prefs.edit().putString("garbage-key", "garbage-value").commit();
     }
 
-    List<Pair<GroupKey, DataFileGroupInternal>> allGroups =
-        fileGroupsMetadata.getAllFreshGroups().get();
+    List<GroupKeyAndGroup> allGroups = fileGroupsMetadata.getAllFreshGroups().get();
     assertThat(allGroups).hasSize(3);
 
     verifyNoErrorInPdsMigration();
@@ -590,7 +610,7 @@ public class FileGroupsMetadataTest {
    */
   boolean writeDataFileGroup(
       GroupKey groupKey, DataFileGroup fileGroup, Optional<String> instanceId) {
-    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey, context);
+    String serializedGroupKey = FileGroupsMetadataUtil.getSerializedGroupKey(groupKey);
     SharedPreferences prefs =
         SharedPreferencesUtil.getSharedPreferences(
             context, FileGroupsMetadataUtil.MDD_FILE_GROUPS, instanceId);

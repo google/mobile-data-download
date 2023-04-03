@@ -90,12 +90,12 @@ public final class TestHttpServer {
 
   /** Registers a handler that binds onto a text file for an endpoint pattern. */
   public void registerTextFile(String pattern, String filepath) {
-    registerFile(pattern, filepath, TEXT_CONTENT_TYPE, /* eTagOptional = */ Optional.absent());
+    registerFile(pattern, filepath, TEXT_CONTENT_TYPE, /* eTagOptional= */ Optional.absent());
   }
 
   /** Registers a handler that binds onto a file for an endpoint pattern. */
   public void registerBinaryFile(String pattern, String filepath) {
-    registerFile(pattern, filepath, BINARY_CONTENT_TYPE, /*eTagOptional=*/ Optional.absent());
+    registerFile(pattern, filepath, BINARY_CONTENT_TYPE, /* eTagOptional= */ Optional.absent());
   }
 
   /**
@@ -131,7 +131,7 @@ public final class TestHttpServer {
   public Uri.Builder startServer() throws IOException {
     serverSocket =
         new ServerSocket(
-            /*port=*/ userDesignatedPort, /*backlog=*/ 0, InetAddress.getByName(TEST_HOST));
+            /* port= */ userDesignatedPort, /* backlog= */ 0, InetAddress.getByName(TEST_HOST));
     serverThread =
         new Thread(
             () -> {

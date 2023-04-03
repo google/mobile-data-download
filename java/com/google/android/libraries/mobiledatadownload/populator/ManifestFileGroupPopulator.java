@@ -22,8 +22,6 @@ import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import android.content.Context;
 import android.net.Uri;
 import androidx.annotation.VisibleForTesting;
-import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping;
-import com.google.android.libraries.mdi.download.populator.MetadataProto.ManifestFileBookkeeping.Status;
 import com.google.android.libraries.mobiledatadownload.AggregateException;
 import com.google.android.libraries.mobiledatadownload.DownloadException;
 import com.google.android.libraries.mobiledatadownload.DownloadException.DownloadResultCode;
@@ -40,6 +38,7 @@ import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStora
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
 import com.google.android.libraries.mobiledatadownload.logger.FileGroupPopulatorLogger;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedExecutionSequencer;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
@@ -49,9 +48,13 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ExecutionSequencer;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto.ManifestConfig;
 import com.google.mobiledatadownload.DownloadConfigProto.ManifestFileFlag;
+import com.google.mobiledatadownload.LogEnumsProto.MddDownloadResult;
+import com.google.mobiledatadownload.populator.MetadataProto.ManifestFileBookkeeping;
+import com.google.mobiledatadownload.populator.MetadataProto.ManifestFileBookkeeping.Status;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
@@ -91,8 +94,7 @@ import javax.inject.Singleton;
  * hosting service needs to support ETag (e.g. Lorry), otherwise the behavior will be unexpected.
  * Talk to <internal>@ if you are not sure if the hosting service supports ETag.
  *
- * <p>Note that {@link SynchronousFileStorage} and {@link ProtoDataStoreFactory} passed to builder
- * must be @Singleton.
+ * <p>
  *
  * <p>This class is @Singleton, because it provides the guarantee that all the operations are
  * serialized correctly by {@link ExecutionSequencer}.
@@ -113,6 +115,7 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
   public static final class Builder {
     private boolean allowsInsecureHttp = false;
     private boolean dedupDownloadWithEtag = true;
+    private boolean forceManifestSyncs = true;
     private Context context;
     private Supplier<ManifestFileFlag> manifestFileFlagSupplier;
     private Supplier<FileDownloader> fileDownloader;
@@ -130,6 +133,7 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
      *
      * <p>For testing only.
      */
+    @CanIgnoreReturnValue
     @VisibleForTesting
     Builder setAllowsInsecureHttp(boolean allowsInsecureHttp) {
       this.allowsInsecureHttp = allowsInsecureHttp;
@@ -140,18 +144,41 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
      * By default, an HTTP HEAD request is made to avoid duplicate downloads of the manifest file.
      * Setting this to false disables that behavior.
      */
+    @CanIgnoreReturnValue
     public Builder setDedupDownloadWithEtag(boolean dedup) {
       this.dedupDownloadWithEtag = dedup;
       return this;
     }
 
+    /**
+     * Force manifest syncs when {@link setDedupDownloadWithEtag} is set to false.
+     *
+     * <p>When NOT deduping with ETag, it's possible that a downloaded version of a manifest may
+     * override a potentially newer version of a manifest, preventing new file groups from being
+     * synced.
+     *
+     * <p>This flag controls whether or not the fix (always downloading the manifest) should be
+     * used.
+     *
+     * <p>NOTE: By default, this flag will be set to true -- if clients would rather have a
+     * controlled rollout of this behavior change, they should include this option in their builder
+     * and connect this to an experimental rollout system. See b/243926815 for more details.
+     */
+    @CanIgnoreReturnValue
+    public Builder setForceManifestSyncsWithoutETag(boolean forceManifestSyncs) {
+      this.forceManifestSyncs = forceManifestSyncs;
+      return this;
+    }
+
     /** Sets the context. */
+    @CanIgnoreReturnValue
     public Builder setContext(Context context) {
       this.context = context.getApplicationContext();
       return this;
     }
 
     /** Sets the manifest file flag. */
+    @CanIgnoreReturnValue
     public Builder setManifestFileFlagSupplier(
         Supplier<ManifestFileFlag> manifestFileFlagSupplier) {
       this.manifestFileFlagSupplier = manifestFileFlagSupplier;
@@ -159,53 +186,66 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
     }
 
     /** Sets the file downloader. */
+    @CanIgnoreReturnValue
     public Builder setFileDownloader(Supplier<FileDownloader> fileDownloader) {
       this.fileDownloader = fileDownloader;
       return this;
     }
 
     /** Sets the manifest config parser that takes file uri and returns {@link ManifestConfig}. */
+    @CanIgnoreReturnValue
     public Builder setManifestConfigParser(ManifestConfigParser manifestConfigParser) {
       this.manifestConfigParser = manifestConfigParser;
       return this;
     }
 
     /** Sets the mobstore file storage. Mobstore file storage must be singleton. */
+    @CanIgnoreReturnValue
     public Builder setFileStorage(SynchronousFileStorage fileStorage) {
       this.fileStorage = fileStorage;
       return this;
     }
 
     /** Sets the background executor that executes populator's tasks sequentially. */
+    @CanIgnoreReturnValue
     public Builder setBackgroundExecutor(Executor backgroundExecutor) {
       this.backgroundExecutor = backgroundExecutor;
       return this;
     }
 
-    /** Sets the ManifestFileMetadataStore. */
+    /**
+     * Sets the ManifestFileMetadataStore.
+     *
+     * <p>
+     */
+    @CanIgnoreReturnValue
     public Builder setMetadataStore(ManifestFileMetadataStore manifestFileMetadataStore) {
       this.manifestFileMetadataStore = manifestFileMetadataStore;
       return this;
     }
 
     /** Sets the MDD logger. */
+    @CanIgnoreReturnValue
     public Builder setLogger(Logger logger) {
       this.logger = logger;
       return this;
     }
 
     /** Sets the optional manifest config overrider. */
+    @CanIgnoreReturnValue
     public Builder setOverriderOptional(Optional<ManifestConfigOverrider> overriderOptional) {
       this.overriderOptional = overriderOptional;
       return this;
     }
 
     /** Sets the optional instance ID. */
+    @CanIgnoreReturnValue
     public Builder setInstanceIdOptional(Optional<String> instanceIdOptional) {
       this.instanceIdOptional = instanceIdOptional;
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder setFlags(Flags flags) {
       this.flags = flags;
       return this;
@@ -230,6 +270,7 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
 
   private final boolean allowsInsecureHttp;
   private final boolean dedupDownloadWithEtag;
+  private final boolean forceManifestSyncs;
   private final Context context;
   private final Uri manifestDirectoryUri;
   private final Supplier<ManifestFileFlag> manifestFileFlagSupplier;
@@ -241,7 +282,8 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
   private final ManifestFileMetadataStore manifestFileMetadataStore;
   private final FileGroupPopulatorLogger eventLogger;
   // We use futureSerializer for synchronization.
-  private final ExecutionSequencer futureSerializer = ExecutionSequencer.create();
+  private final PropagatedExecutionSequencer futureSerializer =
+      PropagatedExecutionSequencer.create();
 
   /** Returns a Builder for {@link ManifestFileGroupPopulator}. */
   public static Builder builder() {
@@ -251,6 +293,7 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
   private ManifestFileGroupPopulator(Builder builder) {
     this.allowsInsecureHttp = builder.allowsInsecureHttp;
     this.dedupDownloadWithEtag = builder.dedupDownloadWithEtag;
+    this.forceManifestSyncs = builder.forceManifestSyncs;
     this.context = builder.context;
     this.manifestDirectoryUri =
         DirectoryUtil.getManifestDirectory(builder.context, builder.instanceIdOptional);
@@ -277,7 +320,8 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
               if (manifestFileFlag == null
                   || manifestFileFlag.equals(ManifestFileFlag.getDefaultInstance())) {
                 LogUtil.w("%s: The ManifestFileFlag is empty.", TAG);
-                logRefreshResult(0, ManifestFileFlag.getDefaultInstance());
+                logRefreshResult(
+                    MddDownloadResult.Code.SUCCESS, ManifestFileFlag.getDefaultInstance());
                 return immediateVoidFuture();
               }
 
@@ -290,7 +334,9 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
       MobileDataDownload mobileDataDownload, ManifestFileFlag manifestFileFlag) {
 
     if (!validate(manifestFileFlag)) {
-      logRefreshResult(0, manifestFileFlag);
+      logRefreshResult(
+          MddDownloadResult.Code.MANIFEST_FILE_GROUP_POPULATOR_INVALID_FLAG_ERROR,
+          manifestFileFlag);
       LogUtil.e("%s: Invalid manifest config from manifest flag.", TAG);
       return immediateFailedFuture(new IllegalArgumentException("Invalid manifest flag."));
     }
@@ -402,7 +448,7 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
               manifestFileFlag);
           // If there is any failure, it should have been thrown already. Therefore, we log refresh
           // success here.
-          logRefreshResult(0, manifestFileFlag);
+          logRefreshResult(MddDownloadResult.Code.SUCCESS, manifestFileFlag);
           return immediateVoidFuture();
         },
         backgroundExecutor);
@@ -430,7 +476,11 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
         .transformAsync(
             (final ManifestConfig manifestConfig) ->
                 ManifestConfigHelper.refreshFromManifestConfig(
-                    mobileDataDownload, manifestConfig, overriderOptional),
+                    mobileDataDownload,
+                    manifestConfig,
+                    overriderOptional,
+                    /* accounts= */ ImmutableList.of(),
+                    /* addGroupsWithVariantId= */ false),
             backgroundExecutor)
         .transformAsync(
             voidArg -> {
@@ -481,7 +531,7 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
     LogUtil.d("%s: Prepare for downloading manifest file.", TAG);
 
     if (!dedupDownloadWithEtag) {
-      return immediateVoidFuture();
+      return handleManifestDedupWithoutETag(urlToDownload, manifestFileUri, bookkeepingRef);
     }
 
     ManifestFileBookkeeping bookkeeping = bookkeepingRef.get();
@@ -524,6 +574,41 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
         backgroundExecutor);
   }
 
+  /**
+   * Handle Manifest Bookkeeping when ETag check should be bypassed.
+   *
+   * <p>If forced syncs are enabled, the existing manifest file will be deleted and the bookkeeping
+   * reference will be updated to a default value. This forces the manifest to be redownloaded.
+   *
+   * <p>If forced syncs are disabled, this is a no-op and existing bookkeeping will be used. This
+   * reuses a downloaded manifest if one exists, or continues a download of a pending manifest.
+   */
+  private ListenableFuture<Void> handleManifestDedupWithoutETag(
+      String urlToDownload,
+      Uri manifestFileUri,
+      AtomicReference<ManifestFileBookkeeping> bookkeepingRef) {
+    LogUtil.d(
+        "%s: Not relying on etag to dedup manifest -- checking if manifest should be force"
+            + " downloaded",
+        TAG);
+    if (forceManifestSyncs) {
+      LogUtil.d(
+          "%s: forcing re-download; urlToDownload = %s;" + " manifestFileUri = %s",
+          TAG, urlToDownload, manifestFileUri);
+      try {
+        deleteManifestFileChecked(manifestFileUri);
+      } catch (DownloadException e) {
+        return immediateFailedFuture(e);
+      }
+      bookkeepingRef.set(createDefaultManifestFileBookkeeping(urlToDownload));
+    } else {
+      LogUtil.d(
+          "%s: not forcing re-download; urlToDownload = %s;" + " manifestFileUri =%s",
+          TAG, urlToDownload, manifestFileUri);
+    }
+    return immediateVoidFuture();
+  }
+
   private ListenableFuture<Void> checkForContentChangeAfterDownload(
       String urlToDownload,
       Uri manifestFileUri,
@@ -531,6 +616,10 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
     LogUtil.d("%s: Finalize for downloading manifest file.", TAG);
 
     if (!dedupDownloadWithEtag) {
+      LogUtil.d(
+          "%s: Not relying on etag to dedup manifest, so the downloaded manifest is"
+              + " assumed to be the latest; urlToDownload = %s, manifestFileUri = %s",
+          TAG, urlToDownload, manifestFileUri);
       return immediateVoidFuture();
     }
 
@@ -610,15 +699,17 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
     }
   }
 
+  // incompatible argument for parameter code of logManifestFileGroupPopulatorRefreshResult.
+  @SuppressWarnings("nullness:argument.type.incompatible")
   private void logRefreshResult(DownloadException e, ManifestFileFlag manifestFileFlag) {
     eventLogger.logManifestFileGroupPopulatorRefreshResult(
-        0,
+        MddDownloadResult.Code.forNumber(e.getDownloadResultCode().getCode()),
         manifestFileFlag.getManifestId(),
         context.getPackageName(),
         manifestFileFlag.getManifestFileUrl());
   }
 
-  private void logRefreshResult(int code, ManifestFileFlag manifestFileFlag) {
+  private void logRefreshResult(MddDownloadResult.Code code, ManifestFileFlag manifestFileFlag) {
     eventLogger.logManifestFileGroupPopulatorRefreshResult(
         code,
         manifestFileFlag.getManifestId(),
@@ -659,7 +750,7 @@ public final class ManifestFileGroupPopulator implements FileGroupPopulator {
   private static ManifestFileBookkeeping createDefaultManifestFileBookkeeping(
       String manifestFileUrl) {
     return createManifestFileBookkeeping(
-        manifestFileUrl, Status.PENDING, /* eTagOptional = */ Optional.absent());
+        manifestFileUrl, Status.PENDING, /* eTagOptional= */ Optional.absent());
   }
 
   private static ManifestFileBookkeeping createManifestFileBookkeeping(

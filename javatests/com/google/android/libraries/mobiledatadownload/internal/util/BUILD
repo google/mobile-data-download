@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library", "android_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -30,6 +31,7 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/internal/util:DirectoryUtil",
         "@androidx_test",
         "@com_google_guava_guava",
+        "@mockito",
         "@truth",
     ],
 )
@@ -81,11 +83,11 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:bytes",
         "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/internal/util:ProtoConversionUtil",
+        "//java/com/google/common/collect",
         "//javatests/com/google/android/libraries/mobiledatadownload/internal:MddTestUtil",
         "//proto:download_config_java_proto_lite",
         "//proto:transform_java_proto_lite",
         "@androidx_test",
-        "@com_google_guava_guava",
         "@com_google_protobuf//:parsers",
         "@com_google_protobuf//:protobuf_lite",
         "@com_google_testing//:test_util",

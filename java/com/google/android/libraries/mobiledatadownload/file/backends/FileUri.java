@@ -19,6 +19,7 @@ import android.net.Uri;
 import com.google.android.libraries.mobiledatadownload.file.common.internal.LiteTransformFragments;
 import com.google.android.libraries.mobiledatadownload.file.transforms.TransformProtos;
 import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.mobiledatadownload.TransformProto;
 import java.io.File;
 
@@ -46,21 +47,25 @@ public final class FileUri {
 
     private Builder() {}
 
+    @CanIgnoreReturnValue
     public Builder setPath(String path) {
       uri.path(path);
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder fromFile(File file) {
       uri.path(file.getAbsolutePath());
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder appendPath(String segment) {
       uri.appendPath(segment);
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder withTransform(TransformProto.Transform spec) {
       encodedSpecs.add(TransformProtos.toEncodedSpec(spec));
       return this;

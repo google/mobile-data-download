@@ -21,6 +21,7 @@ import android.text.TextUtils;
 import com.google.android.libraries.mobiledatadownload.file.common.MalformedUriException;
 import com.google.common.base.Splitter;
 import com.google.common.io.BaseEncoding;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.List;
 
 /** Helper class for "blobstore" URIs. */
@@ -151,17 +152,20 @@ public final class BlobUri {
       this.packageName = context.getPackageName();
     }
 
+    @CanIgnoreReturnValue
     public Builder setBlobParameters(String checksum) {
       path = checksum;
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder setLeaseParameters(String checksum, long expiryDateSecs) {
       path = checksum + LEASE_URI_SUFFIX;
       this.expiryDateSecs = expiryDateSecs;
       return this;
     }
 
+    @CanIgnoreReturnValue
     public Builder setAllLeasesParameters() {
       path = ALL_LEASES_PATH;
       return this;

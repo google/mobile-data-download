@@ -21,6 +21,7 @@ import android.util.Base64;
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
 import com.google.common.io.ByteStreams;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -52,6 +53,7 @@ public final class SystemLibraryOpener implements Opener<Void> {
 
   private SystemLibraryOpener() {}
 
+  @CanIgnoreReturnValue
   public SystemLibraryOpener withCacheDirectory(Uri dir) {
     this.cacheDirectory = dir;
     return this;

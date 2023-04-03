@@ -20,7 +20,6 @@ import static java.lang.Math.min;
 
 import android.content.Context;
 import android.net.Uri;
-import android.util.Pair;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.libraries.mobiledatadownload.Flags;
 import com.google.android.libraries.mobiledatadownload.SilentFeedback;
@@ -28,6 +27,7 @@ import com.google.android.libraries.mobiledatadownload.TimeSource;
 import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.DirectoryUtil;
@@ -39,6 +39,7 @@ import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -98,8 +99,7 @@ public class ExpirationHandler {
     this.flags = flags;
   }
 
-  // TODO(b/124072754): Change to package private once all code is refactored.
-  public ListenableFuture<Void> updateExpiration() {
+  ListenableFuture<Void> updateExpiration() {
     return PropagatedFutures.transformAsync(
         removeExpiredStaleGroups(),
         voidArg0 ->
@@ -116,16 +116,16 @@ public class ExpirationHandler {
         fileGroupsMetadata.getAllFreshGroups(),
         groups -> {
           List<GroupKey> expiredGroupKeys = new ArrayList<>();
-          for (Pair<GroupKey, DataFileGroupInternal> pair : groups) {
-            GroupKey groupKey = pair.first;
-            DataFileGroupInternal dataFileGroup = pair.second;
+          for (GroupKeyAndGroup pair : groups) {
+            GroupKey groupKey = pair.groupKey();
+            DataFileGroupInternal dataFileGroup = pair.dataFileGroup();
             Long groupExpirationDateMillis = FileGroupUtil.getExpirationDateMillis(dataFileGroup);
             LogUtil.d(
                 "%s: Checking group %s with expiration date %s",
                 TAG, dataFileGroup.getGroupName(), groupExpirationDateMillis);
             if (FileGroupUtil.isExpired(groupExpirationDateMillis, timeSource)) {
               eventLogger.logEventSampled(
-                  0,
+                  MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
                   dataFileGroup.getGroupName(),
                   dataFileGroup.getFileGroupVersionNumber(),
                   dataFileGroup.getBuildId(),
@@ -147,7 +147,7 @@ public class ExpirationHandler {
               fileGroupsMetadata.removeAllGroupsWithKeys(expiredGroupKeys),
               removeSuccess -> {
                 if (!removeSuccess) {
-                  eventLogger.logEventSampled(0);
+                  eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                   LogUtil.e("%s: Failed to remove expired groups!", TAG);
                 }
                 return null;
@@ -173,7 +173,7 @@ public class ExpirationHandler {
             // Remove the group from this list if its expired.
             if (FileGroupUtil.isExpired(actualExpirationDateMillis, timeSource)) {
               eventLogger.logEventSampled(
-                  0,
+                  MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
                   staleGroup.getGroupName(),
                   staleGroup.getFileGroupVersionNumber(),
                   staleGroup.getBuildId(),
@@ -197,7 +197,7 @@ public class ExpirationHandler {
                       fileGroupsMetadata.writeStaleGroups(nonExpiredStaleGroups),
                       writeSuccess -> {
                         if (!writeSuccess) {
-                          eventLogger.logEventSampled(0);
+                          eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                           LogUtil.e("%s: Failed to write back stale groups!", TAG);
                         }
                         return immediateVoidFuture();
@@ -239,7 +239,8 @@ public class ExpirationHandler {
                                       if (success) {
                                         removedMetadataCount.getAndIncrement();
                                       } else {
-                                        eventLogger.logEventSampled(0);
+                                        eventLogger.logEventSampled(
+                                            MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
                                         LogUtil.e(
                                             "%s: Unsubscribe from file %s failed!",
                                             TAG, newFileKey);
@@ -325,8 +326,8 @@ public class ExpirationHandler {
         allGroupsByKey -> {
           Set<NewFileKey> fileKeysReferencedByAnyGroup = new HashSet<>();
           List<DataFileGroupInternal> dataFileGroups = new ArrayList<>();
-          for (Pair<GroupKey, DataFileGroupInternal> dataFileGroupPair : allGroupsByKey) {
-            dataFileGroups.add(dataFileGroupPair.second);
+          for (GroupKeyAndGroup dataFileGroupPair : allGroupsByKey) {
+            dataFileGroups.add(dataFileGroupPair.dataFileGroup());
           }
           return PropagatedFutures.transform(
               fileGroupsMetadata.getAllStaleGroups(),
@@ -364,8 +365,8 @@ public class ExpirationHandler {
     return PropagatedFutures.transform(
         fileGroupsMetadata.getAllFreshGroups(),
         groupKeyAndGroupList -> {
-          for (Pair<GroupKey, DataFileGroupInternal> groupKeyAndGroup : groupKeyAndGroupList) {
-            DataFileGroupInternal freshGroup = groupKeyAndGroup.second;
+          for (GroupKeyAndGroup groupKeyAndGroup : groupKeyAndGroupList) {
+            DataFileGroupInternal freshGroup = groupKeyAndGroup.dataFileGroup();
             // Skip any groups that don't support isolated structures
             if (!FileGroupUtil.isIsolatedStructureAllowed(freshGroup)) {
               continue;
@@ -390,9 +391,9 @@ public class ExpirationHandler {
       try {
         fileStorage.deleteFile(sharedFile);
         releasedFiles += 1;
-        eventLogger.logEventSampled(0);
+        eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
       } catch (IOException e) {
-        eventLogger.logEventSampled(0);
+        eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
         LogUtil.e(e, "%s: Failed to release unaccounted file!", TAG);
       }
     }
@@ -422,13 +423,13 @@ public class ExpirationHandler {
           }
 
         } catch (IOException e) {
-          eventLogger.logEventSampled(0);
+          eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
           LogUtil.e(e, "%s: Failed to delete unaccounted file!", TAG);
         }
       }
 
     } catch (IOException e) {
-      eventLogger.logEventSampled(0);
+      eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
       LogUtil.e(e, "%s: Failed to delete unaccounted file!", TAG);
     }
     return unaccountedFileCount;

@@ -132,9 +132,21 @@ message DataFileGroup {
   // Ex: 172800  // 2 Days
   optional int64 stale_lifetime_secs = 3;
 
-  // The timestamp at which this filegroup should be deleted, even if it is
-  // still active, specified in seconds since epoch.
-  // NOTE: MDD will delete the file group version within a day of this time.
+  // The timestamp at which this filegroup should be deleted specified in
+  // seconds since epoch. This is a hard deadline and can be applied to file
+  // groups still in the ACTIVE state. If the value is 0, that is the same as
+  // unset (no expiration). Expiration is performed at next cleanup time, which
+  // is typically daily. Therefore, file groups may remain even after expired,
+  // and may do so indefinitely if cleanup is not scheduled.
+  //
+  // NOTE this is not the way to delete a file group. For example, setting an
+  // expiration date in the past will fail, potentially leaving an unexpired
+  // file group in place indefinitely. Use the MDD removeFileGroup API for that
+  // on device. From the server, the way to delete a file group is to add a new
+  // one with the same name, but with no files (this functions as a tombstone).
+  //
+  // NOTE b/252890898 for behavior on CastOS (cMDD)
+  // NOTE b/252885626 for missing support for delete in MobServe Ingress
   optional int64 expiration_date = 11;
 
   // Specify the conditions under which the file group should be downloaded.
@@ -227,8 +239,8 @@ message DataFile {
     DEFAULT = 0;
 
     // No checksum is provided.
-    // This is NOT currently supported by iMDD. Please contact <internal>@ if
-    // you need this feature.
+    // This is NOT currently supported by iMDD. Please contact <internal>@ if you
+    // need this feature.
     NONE = 1;
 
     // This is currently only supported by cMDD. If you need it for Android or
@@ -518,6 +530,8 @@ message ManifestConfig {
         // prefix encoding, however, for the S2CellIds the high-order bits
         // encode the face-ID and as a result we often end up with large
         // numbers.
+        optional fixed64 s2_cell_id = 1 [
+          (datapol.semantic_type) = ST_LOCATION
         optional fixed64 s2_cell_id = 1;
       }
 

@@ -20,6 +20,7 @@ import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
 import com.google.android.libraries.mobiledatadownload.file.common.FileChannelConvertible;
 import com.google.android.libraries.mobiledatadownload.file.common.ReleasableResource;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -42,7 +43,7 @@ import javax.annotation.Nullable;
  */
 public final class LockFileOpener implements Opener<Closeable> {
 
-  private static final String LOCK_SUFFIX = ".lock";
+  public static final String LOCK_SUFFIX = ".lock";
 
   private final boolean shared;
   private final boolean readOnly;
@@ -84,6 +85,7 @@ public final class LockFileOpener implements Opener<Closeable> {
    * If enabled and the lock cannot be acquired immediately, {@link #open} will return {@code null}
    * instead of waiting until the lock can be acquired.
    */
+  @CanIgnoreReturnValue
   public LockFileOpener nonBlocking(boolean isNonBlocking) {
     this.isNonBlocking = isNonBlocking;
     return this;

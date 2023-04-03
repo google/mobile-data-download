@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -52,6 +53,7 @@ android_library(
         "//proto:transform_java_proto_lite",
         "@androidx_annotation_annotation",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )
@@ -63,6 +65,7 @@ android_library(
     ],
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )
@@ -78,6 +81,7 @@ android_library(
         ":file_descriptor",
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "@com_google_code_findbugs_jsr305",
         "@com_google_guava_guava",
     ],
 )
@@ -92,6 +96,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:preconditions",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "@com_google_errorprone_error_prone_annotations",
     ],
 )
 
@@ -121,6 +126,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:proto",
         "//proto:transform_java_proto_lite",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )
@@ -137,6 +143,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:proto",
         "//proto:transform_java_proto_lite",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )
@@ -171,6 +178,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/transforms:proto",
         "//proto:transform_java_proto_lite",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
     ],
 )
@@ -211,6 +219,7 @@ android_library(
     visibility = ["//:__subpackages__"],
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:preconditions",
+        "@com_google_errorprone_error_prone_annotations",
         # NOTE: dependency of gmscore client lib <internal>
     ],
 )

@@ -108,6 +108,7 @@ public class DirectoryUtil {
    *     URI, otherwise it returns the "android" scheme URI.
    */
   // TODO(b/118137672): getOnDeviceUri shouldn't return null on error.
+
   @Nullable
   public static Uri getOnDeviceUri(
       Context context,

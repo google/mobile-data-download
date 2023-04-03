@@ -15,10 +15,13 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal.util;
 
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Function;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -89,18 +92,20 @@ public final class FuturesUtil {
       this.init = init;
     }
 
+    @CanIgnoreReturnValue
     public SequentialFutureChain<T> chain(Function<T, T> operation) {
       operations.add(new DirectFutureChainElement<>(operation));
       return this;
     }
 
+    @CanIgnoreReturnValue
     public SequentialFutureChain<T> chainAsync(Function<T, ListenableFuture<T>> operation) {
       operations.add(new AsyncFutureChainElement<>(operation));
       return this;
     }
 
     public ListenableFuture<T> start() {
-      ListenableFuture<T> result = Futures.immediateFuture(init);
+      ListenableFuture<T> result = immediateFuture(init);
       for (FutureChainElement<T> operation : operations) {
         result = operation.apply(result);
       }
@@ -121,7 +126,7 @@ public final class FuturesUtil {
 
     @Override
     public ListenableFuture<T> apply(ListenableFuture<T> input) {
-      return Futures.transform(input, operation::apply, sequentialExecutor);
+      return PropagatedFutures.transform(input, operation, sequentialExecutor);
     }
   }
 
@@ -134,7 +139,7 @@ public final class FuturesUtil {
 
     @Override
     public ListenableFuture<T> apply(ListenableFuture<T> input) {
-      return Futures.transformAsync(input, operation::apply, sequentialExecutor);
+      return PropagatedFutures.transformAsync(input, operation::apply, sequentialExecutor);
     }
   }
 }

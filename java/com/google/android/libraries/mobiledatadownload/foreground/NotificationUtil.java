@@ -24,7 +24,6 @@ import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
-import androidx.core.app.NotificationCompat.BigTextStyle;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import com.google.common.base.Preconditions;
@@ -58,8 +57,7 @@ public final class NotificationUtil {
         .setContentText(contentText)
         .setSmallIcon(android.R.drawable.stat_sys_download)
         .setOngoing(true)
-        .setProgress(size, 0, false)
-        .setStyle(new BigTextStyle().bigText(contentText));
+        .setProgress(size, 0, false);
   }
 
   private static NotificationCompat.Builder getNotificationBuilder(Context context) {
@@ -141,9 +139,10 @@ public final class NotificationUtil {
 
   /** Sending the intent to stop the foreground download service */
   public static void stopForegroundDownloadService(
-      Context context, Class<?> foregroundDownloadService) {
+      Context context, Class<?> foregroundDownloadService, String key) {
     Intent intent = new Intent(context, foregroundDownloadService);
     intent.putExtra(STOP_SERVICE_EXTRA, true);
+    intent.putExtra(KEY_EXTRA, key);
 
     // This will send the intent to stop the service.
     ContextCompat.startForegroundService(context, intent);
@@ -155,6 +154,14 @@ public final class NotificationUtil {
    */
   public static String getDownloadPausedMessage(Context context) {
     return context.getResources().getString(R.string.mdd_notification_download_paused);
+  }
+
+  /**
+   * Return the String message to display in Notification when the download is paused due to a
+   * missing wifi connection.
+   */
+  public static String getDownloadPausedWifiMessage(Context context) {
+    return context.getResources().getString(R.string.mdd_notification_download_paused_wifi);
   }
 
   /** Return the String message to display in Notification when the download is failed. */
@@ -184,6 +191,7 @@ public final class NotificationUtil {
 
   /** Utilities for safely accessing PendingIntent APIs. */
   private interface SaferIntentUtils {
+
     @Nullable
     @RequiresApi(VERSION_CODES.O) // to match PendingIntent.getForegroundService()
     default PendingIntent getForegroundService(

@@ -15,6 +15,7 @@ load("//tools/build_defs/testing:bzl_library.bzl", "bzl_library")
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_testonly = 1,
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
@@ -32,6 +33,7 @@ java_library(
     ],
     deps = [
         "@android_sdk_linux",
+        "@com_google_errorprone_error_prone_annotations",
         "@robolectric",
     ],
 )
@@ -78,6 +80,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:charsets",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
         "@junit",
         "@truth",
@@ -102,6 +105,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/common:fragment",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:forwarding_stream",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
+        "@com_google_errorprone_error_prone_annotations",
         "@com_google_guava_guava",
         "@junit",
         "@truth",
@@ -120,18 +124,20 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:forwarding_stream",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
         "@com_google_code_findbugs_jsr305",
+        "@com_google_errorprone_error_prone_annotations",
         "@org_checkerframework_qual",
     ],
 )
 
 java_lite_proto_library(
     name = "test_message_java_proto_lite",
-    deps = [":test_message_proto"],
+    deps = ["//java/com/google/android/libraries/mobiledatadownload/file/common/testing:test_message_proto"],
 )
 
 proto_library(
     name = "test_message_proto",
     srcs = ["test_message.proto"],
+    deps = ["@com_google_protobuf//:timestamp_proto"],
 )
 
 bzl_library(

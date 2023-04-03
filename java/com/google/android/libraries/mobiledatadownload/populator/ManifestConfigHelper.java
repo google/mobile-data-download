@@ -15,9 +15,11 @@
  */
 package com.google.android.libraries.mobiledatadownload.populator;
 
-import android.util.Log;
+import android.accounts.Account;
 import com.google.android.libraries.mobiledatadownload.AddFileGroupRequest;
+import com.google.android.libraries.mobiledatadownload.AggregateException;
 import com.google.android.libraries.mobiledatadownload.MobileDataDownload;
+import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentFuture;
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
@@ -40,69 +42,150 @@ public final class ManifestConfigHelper {
 
   private final MobileDataDownload mobileDataDownload;
   private final Optional<ManifestConfigOverrider> overriderOptional;
+  private final List<Account> accounts;
+  private final boolean addGroupsWithVariantId;
 
   /** Creates a new helper for converting manifest configs into data file groups. */
   ManifestConfigHelper(
-      MobileDataDownload mobileDataDownload, Optional<ManifestConfigOverrider> overriderOptional) {
+      MobileDataDownload mobileDataDownload,
+      Optional<ManifestConfigOverrider> overriderOptional,
+      List<Account> accounts,
+      boolean addGroupsWithVariantId) {
     this.mobileDataDownload = mobileDataDownload;
     this.overriderOptional = overriderOptional;
+    this.accounts = accounts;
+    this.addGroupsWithVariantId = addGroupsWithVariantId;
   }
 
   /**
    * Reads file groups from {@link ManifestConfig} and adds to MDD after applying the {@link
-   * ManifestConfigOverrider} if it's present. This static method is shared with {@link
-   * ManifestFileGroupPopulator}.
+   * ManifestConfigOverrider} if it's present.
    *
-   * @param mobileDataDownload The MDD instance.
-   * @param manifestConfig The proto that contains configs for file groups and modifiers.
+   * <p>This static method encapsulates shared logic between a few populators:
+   *
+   * <ul>
+   *   <li>{@link ManifestFileGroupPopulator}
+   *   <li>{@link ManifestConfigFlagPopulator}
+   *   <li>{@link LocalManifestFileGroupPopulator}
+   *   <li>{@link EmbeddedAssetManifestPopulator}
+   * </ul>
+   *
+   * @param mobileDataDownload The MDD instance
+   * @param manifestConfig The proto that contains configs for file groups and modifiers
    * @param overriderOptional An optional overrider that takes manifest config and returns a list of
-   *     file groups to be added to MDD.
+   *     file groups to be added ot MDD
+   * @param accounts A list of accounts that the parsed file groups should be associated with
+   * @param addGroupsWithVariantId whether variantId should be included when adding the parsed file
+   *     groups
    */
   static ListenableFuture<Void> refreshFromManifestConfig(
       MobileDataDownload mobileDataDownload,
       ManifestConfig manifestConfig,
-      Optional<ManifestConfigOverrider> overriderOptional) {
-    ManifestConfigHelper helper = new ManifestConfigHelper(mobileDataDownload, overriderOptional);
+      Optional<ManifestConfigOverrider> overriderOptional,
+      List<Account> accounts,
+      boolean addGroupsWithVariantId) {
+    ManifestConfigHelper helper =
+        new ManifestConfigHelper(
+            mobileDataDownload, overriderOptional, accounts, addGroupsWithVariantId);
     return PropagatedFluentFuture.from(helper.applyOverrider(manifestConfig))
-        .transformAsync(helper::addAllFileGroups, MoreExecutors.directExecutor());
+        .transformAsync(helper::addAllFileGroups, MoreExecutors.directExecutor())
+        .catchingAsync(
+            AggregateException.class,
+            ex -> Futures.immediateVoidFuture(),
+            MoreExecutors.directExecutor());
   }
 
   /** Adds the specified list of file groups to MDD. */
   ListenableFuture<Void> addAllFileGroups(List<DataFileGroup> fileGroups) {
     List<ListenableFuture<Boolean>> addFileGroupFutures = new ArrayList<>();
+    Optional<String> variantId = Optional.absent();
 
     for (DataFileGroup dataFileGroup : fileGroups) {
       if (dataFileGroup == null || dataFileGroup.getGroupName().isEmpty()) {
         continue;
       }
 
+      // Include variantId if variant is present and helper is configured to do so
+      if (addGroupsWithVariantId && !dataFileGroup.getVariantId().isEmpty()) {
+        variantId = Optional.of(dataFileGroup.getVariantId());
+      }
+
+      AddFileGroupRequest.Builder addFileGroupRequestBuilder =
+          AddFileGroupRequest.newBuilder()
+              .setDataFileGroup(dataFileGroup)
+              .setVariantIdOptional(variantId);
+
+      // Add once without any account
       ListenableFuture<Boolean> addFileGroupFuture =
-          mobileDataDownload.addFileGroup(
-              AddFileGroupRequest.newBuilder().setDataFileGroup(dataFileGroup).build());
-
-      PropagatedFutures.addCallback(
+          mobileDataDownload.addFileGroup(addFileGroupRequestBuilder.build());
+      attachLoggingCallback(
           addFileGroupFuture,
-          new FutureCallback<Boolean>() {
-            @Override
-            public void onSuccess(Boolean result) {
-              String groupName = dataFileGroup.getGroupName();
-              if (result.booleanValue()) {
-                Log.d(TAG, "Added file groups " + groupName);
-              } else {
-                Log.d(TAG, "Failed to add file group " + groupName);
-              }
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-              Log.e(TAG, "Failed to add file group", t);
-            }
-          },
-          MoreExecutors.directExecutor());
+          dataFileGroup.getGroupName(),
+          /* account= */ Optional.absent(),
+          variantId);
       addFileGroupFutures.add(addFileGroupFuture);
+
+      // Add for each account
+      for (Account account : accounts) {
+        ListenableFuture<Boolean> addFileGroupFutureWithAccount =
+            mobileDataDownload.addFileGroup(
+                addFileGroupRequestBuilder.setAccountOptional(Optional.of(account)).build());
+        attachLoggingCallback(
+            addFileGroupFutureWithAccount,
+            dataFileGroup.getGroupName(),
+            Optional.of(account),
+            variantId);
+        addFileGroupFutures.add(addFileGroupFutureWithAccount);
+      }
     }
     return PropagatedFutures.whenAllComplete(addFileGroupFutures)
-        .call(() -> null, MoreExecutors.directExecutor());
+        .call(
+            () -> {
+              AggregateException.throwIfFailed(addFileGroupFutures, "Failed to add file groups");
+              return null;
+            },
+            MoreExecutors.directExecutor());
+  }
+
+  private void attachLoggingCallback(
+      ListenableFuture<Boolean> addFileGroupFuture,
+      String groupName,
+      Optional<Account> account,
+      Optional<String> variant) {
+    PropagatedFutures.addCallback(
+        addFileGroupFuture,
+        new FutureCallback<Boolean>() {
+          @Override
+          public void onSuccess(Boolean result) {
+            if (result.booleanValue()) {
+              LogUtil.d(
+                  "%s: Added file group %s with account: %s, variant: %s",
+                  TAG,
+                  groupName,
+                  String.valueOf(account.orNull()),
+                  String.valueOf(variant.orNull()));
+            } else {
+              LogUtil.d(
+                  "%s: Failed to add file group %s with account: %s, variant: %s",
+                  TAG,
+                  groupName,
+                  String.valueOf(account.orNull()),
+                  String.valueOf(variant.orNull()));
+            }
+          }
+
+          @Override
+          public void onFailure(Throwable t) {
+            LogUtil.e(
+                t,
+                "%s: Failed to add file group %s with account: %s, variant: %s",
+                TAG,
+                groupName,
+                String.valueOf(account.orNull()),
+                String.valueOf(variant.orNull()));
+          }
+        },
+        MoreExecutors.directExecutor());
   }
 
   /** Applies the overrider to the manifest config to generate a list of file groups for adding. */

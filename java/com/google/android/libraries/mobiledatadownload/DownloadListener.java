@@ -42,8 +42,14 @@ public interface DownloadListener {
    *
    * <p>The onComplete is run on MDD Control Executor. If you need to do heavy work, please offload
    * to a background task.
+   *
+   * <p>If using foreground downloads, an exception may be thrown here to tell MDD a failure
+   * notification should be shown instead of a success notification. <b>NOTE:</b> this is the only
+   * case where the exception will be taken into account. Throwing an exception here will
+   * <em>NOT</em> cause the download future returned by MDD to fail.
    */
-  void onComplete(ClientFileGroup clientFileGroup);
+  // TODO (b/236401280): Switch to async api
+  void onComplete(ClientFileGroup clientFileGroup) throws Exception;
 
   /** This will be called when the download failed. */
   default void onFailure(Throwable t) {

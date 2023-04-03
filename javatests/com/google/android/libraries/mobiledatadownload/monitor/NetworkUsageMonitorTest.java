@@ -26,12 +26,16 @@ import android.net.NetworkInfo.DetailedState;
 import android.net.Uri;
 import android.os.Build;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.mobiledatadownload.internal.MetadataProto.FileGroupLoggingState;
+import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.android.libraries.mobiledatadownload.file.common.testing.TemporaryUri;
 import com.google.android.libraries.mobiledatadownload.file.spi.Monitor;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LoggingStateStore;
-import com.google.android.libraries.mobiledatadownload.internal.logging.NoOpLoggingState;
 import com.google.android.libraries.mobiledatadownload.testing.FakeTimeSource;
-import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
+import com.google.android.libraries.mobiledatadownload.testing.MddTestDependencies;
+import com.google.common.base.Optional;
+import java.util.List;
+import java.util.Random;
 import java.util.concurrent.Executor;
 import org.junit.Before;
 import org.junit.Rule;
@@ -86,7 +90,9 @@ public class NetworkUsageMonitorTest {
   public void setUp() throws Exception {
     context = ApplicationProvider.getApplicationContext();
 
-    loggingStateStore = new NoOpLoggingState();
+    loggingStateStore =
+        MddTestDependencies.LoggingStateStoreImpl.SHARED_PREFERENCES.loggingStateStore(
+            context, Optional.absent(), new FakeTimeSource(), executor, new Random());
 
     // TODO(b/177015303): use builder when available
     networkUsageMonitor = new NetworkUsageMonitor(context, clock);
@@ -119,9 +125,9 @@ public class NetworkUsageMonitorTest {
             .setVariantId(VARIANT_ID_1)
             .build();
     networkUsageMonitor.monitorUri(
-        uri1, groupKey1, BUILD_ID_1, VERSION_NUMBER_1, loggingStateStore);
+        uri1, groupKey1, BUILD_ID_1, VARIANT_ID_1, VERSION_NUMBER_1, loggingStateStore);
     networkUsageMonitor.monitorUri(
-        uri2, groupKey1, BUILD_ID_1, VERSION_NUMBER_1, loggingStateStore);
+        uri2, groupKey1, BUILD_ID_1, VARIANT_ID_1, VERSION_NUMBER_1, loggingStateStore);
 
     GroupKey groupKey2 =
         GroupKey.newBuilder()
@@ -131,7 +137,7 @@ public class NetworkUsageMonitorTest {
             .build();
 
     networkUsageMonitor.monitorUri(
-        uri3, groupKey2, BUILD_ID_2, VERSION_NUMBER_2, loggingStateStore);
+        uri3, groupKey2, BUILD_ID_2, VARIANT_ID_2, VERSION_NUMBER_2, loggingStateStore);
 
     Monitor.OutputMonitor outputMonitor1 = networkUsageMonitor.monitorWrite(uri1);
     Monitor.OutputMonitor outputMonitor2 = networkUsageMonitor.monitorWrite(uri2);
@@ -172,6 +178,27 @@ public class NetworkUsageMonitorTest {
     outputMonitor3.close();
 
     // await executors idle here if we switch from directExecutor...
+
+    List<FileGroupLoggingState> allLoggingState = loggingStateStore.getAndResetAllDataUsage().get();
+
+    assertThat(allLoggingState)
+        .containsExactly(
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey1)
+                .setBuildId(BUILD_ID_1)
+                .setVariantId(VARIANT_ID_1)
+                .setFileGroupVersionNumber(VERSION_NUMBER_1)
+                .setCellularUsage(16 + 32)
+                .setWifiUsage(1 + 2 + 4)
+                .build(),
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey2)
+                .setBuildId(BUILD_ID_2)
+                .setVariantId(VARIANT_ID_2)
+                .setFileGroupVersionNumber(VERSION_NUMBER_2)
+                .setCellularUsage(64)
+                .setWifiUsage(8)
+                .build());
   }
 
   @Test
@@ -186,9 +213,9 @@ public class NetworkUsageMonitorTest {
             .setVariantId(VARIANT_ID_1)
             .build();
     networkUsageMonitor.monitorUri(
-        uri1, groupKey1, BUILD_ID_1, VERSION_NUMBER_1, loggingStateStore);
+        uri1, groupKey1, BUILD_ID_1, VARIANT_ID_1, VERSION_NUMBER_1, loggingStateStore);
     networkUsageMonitor.monitorUri(
-        uri2, groupKey1, BUILD_ID_1, VERSION_NUMBER_1, loggingStateStore);
+        uri2, groupKey1, BUILD_ID_1, VARIANT_ID_1, VERSION_NUMBER_1, loggingStateStore);
 
     GroupKey groupKey2 =
         GroupKey.newBuilder()
@@ -199,9 +226,9 @@ public class NetworkUsageMonitorTest {
 
     // This would update uri2 to belong to FileGroup v2.
     networkUsageMonitor.monitorUri(
-        uri2, groupKey2, BUILD_ID_2, VERSION_NUMBER_2, loggingStateStore);
+        uri2, groupKey2, BUILD_ID_2, VARIANT_ID_2, VERSION_NUMBER_2, loggingStateStore);
     networkUsageMonitor.monitorUri(
-        uri3, groupKey2, BUILD_ID_2, VERSION_NUMBER_2, loggingStateStore);
+        uri3, groupKey2, BUILD_ID_2, VARIANT_ID_2, VERSION_NUMBER_2, loggingStateStore);
 
     Monitor.OutputMonitor outputMonitor1 = networkUsageMonitor.monitorWrite(uri1);
     Monitor.OutputMonitor outputMonitor2 = networkUsageMonitor.monitorWrite(uri2);
@@ -241,6 +268,27 @@ public class NetworkUsageMonitorTest {
     outputMonitor1.close();
     outputMonitor2.close();
     outputMonitor3.close();
+
+    List<FileGroupLoggingState> allLoggingState = loggingStateStore.getAndResetAllDataUsage().get();
+
+    assertThat(allLoggingState)
+        .containsExactly(
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey1)
+                .setBuildId(BUILD_ID_1)
+                .setVariantId(VARIANT_ID_1)
+                .setFileGroupVersionNumber(VERSION_NUMBER_1)
+                .setCellularUsage(16)
+                .setWifiUsage(1 + 2)
+                .build(),
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey2)
+                .setBuildId(BUILD_ID_2)
+                .setVariantId(VARIANT_ID_2)
+                .setFileGroupVersionNumber(VERSION_NUMBER_2)
+                .setCellularUsage(32 + 64)
+                .setWifiUsage(4 + 8)
+                .build());
   }
 
   @Test
@@ -255,7 +303,7 @@ public class NetworkUsageMonitorTest {
             .setVariantId(VARIANT_ID_1)
             .build();
     networkUsageMonitor.monitorUri(
-        uri1, groupKey1, BUILD_ID_1, VERSION_NUMBER_1, loggingStateStore);
+        uri1, groupKey1, BUILD_ID_1, VARIANT_ID_1, VERSION_NUMBER_1, loggingStateStore);
 
     Monitor.OutputMonitor outputMonitor1 = networkUsageMonitor.monitorWrite(uri1);
 
@@ -265,6 +313,16 @@ public class NetworkUsageMonitorTest {
     // Downloaded 1 bytes on WIFI for uri1
     setNetworkConnectivityType(ConnectivityManager.TYPE_WIFI);
     outputMonitor1.bytesWritten(new byte[1], 0, 1);
+    assertThat(loggingStateStore.getAndResetAllDataUsage().get())
+        .containsExactly(
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey1)
+                .setBuildId(BUILD_ID_1)
+                .setVariantId(VARIANT_ID_1)
+                .setFileGroupVersionNumber(VERSION_NUMBER_1)
+                .setCellularUsage(0)
+                .setWifiUsage(1)
+                .build());
 
     // Advance the clock by < LOG_FREQUENCY_SECONDS
     clock.advance(1, MILLISECONDS);
@@ -279,6 +337,18 @@ public class NetworkUsageMonitorTest {
     // Advance the clock by > LOG_FREQUENCY_SECONDS
     clock.advance(NetworkUsageMonitor.LOG_FREQUENCY_SECONDS + 1, SECONDS);
     outputMonitor1.bytesWritten(new byte[16], 0, 8);
+
+    // All chunks were saved.
+    assertThat(loggingStateStore.getAndResetAllDataUsage().get())
+        .containsExactly(
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey1)
+                .setBuildId(BUILD_ID_1)
+                .setVariantId(VARIANT_ID_1)
+                .setFileGroupVersionNumber(VERSION_NUMBER_1)
+                .setCellularUsage(0)
+                .setWifiUsage(2 + 4 + 8)
+                .build());
   }
 
   @Test
@@ -294,9 +364,9 @@ public class NetworkUsageMonitorTest {
             .setVariantId(VARIANT_ID_1)
             .build();
     networkUsageMonitor.monitorUri(
-        uri1, groupKey1, BUILD_ID_1, VERSION_NUMBER_1, loggingStateStore);
+        uri1, groupKey1, BUILD_ID_1, VARIANT_ID_1, VERSION_NUMBER_1, loggingStateStore);
     networkUsageMonitor.monitorUri(
-        uri2, groupKey1, BUILD_ID_1, VERSION_NUMBER_1, loggingStateStore);
+        uri2, groupKey1, BUILD_ID_1, VARIANT_ID_1, VERSION_NUMBER_1, loggingStateStore);
 
     GroupKey groupKey2 =
         GroupKey.newBuilder()
@@ -306,7 +376,7 @@ public class NetworkUsageMonitorTest {
             .build();
 
     networkUsageMonitor.monitorUri(
-        uri3, groupKey2, BUILD_ID_2, VERSION_NUMBER_2, loggingStateStore);
+        uri3, groupKey2, BUILD_ID_2, VARIANT_ID_2, VERSION_NUMBER_2, loggingStateStore);
 
     Monitor.OutputMonitor outputMonitor1 = networkUsageMonitor.monitorWrite(uri1);
     Monitor.OutputMonitor outputMonitor2 = networkUsageMonitor.monitorAppend(uri2);
@@ -347,6 +417,27 @@ public class NetworkUsageMonitorTest {
     outputMonitor3.close();
 
     // await executors idle here if we switch from directExecutor...
+
+    List<FileGroupLoggingState> allLoggingState = loggingStateStore.getAndResetAllDataUsage().get();
+
+    assertThat(allLoggingState)
+        .containsExactly(
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey1)
+                .setBuildId(BUILD_ID_1)
+                .setVariantId(VARIANT_ID_1)
+                .setFileGroupVersionNumber(VERSION_NUMBER_1)
+                .setCellularUsage(16 + 32)
+                .setWifiUsage(1 + 2 + 4)
+                .build(),
+            FileGroupLoggingState.newBuilder()
+                .setGroupKey(groupKey2)
+                .setBuildId(BUILD_ID_2)
+                .setVariantId(VARIANT_ID_2)
+                .setFileGroupVersionNumber(VERSION_NUMBER_2)
+                .setCellularUsage(64)
+                .setWifiUsage(8)
+                .build());
   }
 
   @Test

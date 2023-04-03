@@ -93,6 +93,8 @@ public final class SharedFilesMetadataUtil {
         .toString();
   }
 
+  // incompatible argument for parameter value of setAllowedReaders.
+  @SuppressWarnings("nullness:argument.type.incompatible")
   public static NewFileKey deserializeNewFileKey(
       String serializedFileKey, Context context, SilentFeedback silentFeedback)
       throws FileKeyDeserializationException {

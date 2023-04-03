@@ -44,6 +44,7 @@ import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
 import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 
@@ -210,7 +211,7 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
                     baseFileKey.getChecksum(),
                     silentFeedback,
                     instanceId,
-                    /* androidShared = */ false);
+                    /* androidShared= */ false);
           }
 
           if (baseFileUri == null) {
@@ -237,7 +238,14 @@ public final class DeltaFileDownloaderCallbackImpl implements DownloaderCallback
                     .setCause(e)
                     .build());
           }
-          Void fileGroupStats = null;
+          DataDownloadFileGroupStats fileGroupStats =
+              DataDownloadFileGroupStats.newBuilder()
+                  .setFileGroupName(groupKey.getGroupName())
+                  .setFileGroupVersionNumber(fileGroupVersionNumber)
+                  .setOwnerPackage(groupKey.getOwnerPackage())
+                  .setBuildId(buildId)
+                  .setVariantId(variantId)
+                  .build();
           eventLogger.logMddNetworkSavings(
               fileGroupStats,
               0,

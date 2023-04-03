@@ -15,6 +15,7 @@
  */
 package com.google.android.libraries.mobiledatadownload.testing;
 
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 
 import android.net.Uri;
@@ -23,9 +24,11 @@ import com.google.android.libraries.mobiledatadownload.downloader.DownloadReques
 import com.google.android.libraries.mobiledatadownload.downloader.FileDownloader;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.backends.FileUri;
+import com.google.common.util.concurrent.ExecutionSequencer;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.devtools.build.runtime.RunfilesPaths;
+import java.io.IOException;
 import java.nio.file.Path;
 
 /**
@@ -42,21 +45,42 @@ import java.nio.file.Path;
 public final class RobolectricFileDownloader implements FileDownloader {
 
   private final String testDataRelativePath;
+  private final SynchronousFileStorage fileStorage;
+  private final ListeningExecutorService executor;
   private final FileDownloader delegateDownloader;
+
+  // Sequence downloads to prevent any potential overwrites
+  private final ExecutionSequencer executionSequencer = ExecutionSequencer.create();
 
   public RobolectricFileDownloader(
       String testDataRelativePath,
       SynchronousFileStorage fileStorage,
       ListeningExecutorService executor) {
     this.testDataRelativePath = testDataRelativePath;
+    this.fileStorage = fileStorage;
+    this.executor = executor;
     this.delegateDownloader = new LocalFileDownloader(fileStorage, executor);
   }
 
   @Override
   public ListenableFuture<Void> startDownloading(DownloadRequest downloadRequest) {
+    return executionSequencer.submitAsync(
+        () -> startDownloadingInternal(downloadRequest), executor);
+  }
+
+  private ListenableFuture<Void> startDownloadingInternal(DownloadRequest downloadRequest) {
     Uri fileUri = downloadRequest.fileUri();
     String urlToDownload = downloadRequest.urlToDownload();
     DownloadConstraints downloadConstraints = downloadRequest.downloadConstraints();
+
+    // If the file already exists, return immediately
+    try {
+      if (fileStorage.exists(fileUri)) {
+        return immediateVoidFuture();
+      }
+    } catch (IOException e) {
+      return immediateFailedFuture(e);
+    }
 
     // We need to translate the real urlToDownload to the one representing the local file in
     // testdata folder.

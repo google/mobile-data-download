@@ -14,6 +14,7 @@
 load("//javatests/com/google/android/libraries/mobiledatadownload:test_defs.bzl", "mdd_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -23,14 +24,18 @@ mdd_local_test(
     srcs = ["NetworkUsageMonitorTest.java"],
     test_class = "com.google.android.libraries.mobiledatadownload.monitor.NetworkUsageMonitorTest",
     deps = [
+        "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
         "//java/com/google/android/libraries/mobiledatadownload/file/spi",
         "//java/com/google/android/libraries/mobiledatadownload/internal/logging:LoggingStateStore",
-        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:NoOpLoggingState",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/logging:SharedPreferencesLoggingState",
         "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/monitor:NetworkUsageMonitor",
         "//javatests/com/google/android/libraries/mobiledatadownload/testing:FakeTimeSource",
+        "//javatests/com/google/android/libraries/mobiledatadownload/testing:MddTestDependencies",
         "@android_sdk_linux",
+        "@com_google_guava_guava",
         "@robolectric",
         "@truth",
     ],

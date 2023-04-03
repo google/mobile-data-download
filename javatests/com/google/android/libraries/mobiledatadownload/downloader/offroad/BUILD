@@ -14,6 +14,7 @@
 load("//javatests/com/google/android/libraries/mobiledatadownload:test_defs.bzl", "mdd_local_test")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -32,15 +33,18 @@ mdd_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad:ExceptionHandler",
         "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad:Offroad2FileDownloader",
         "//java/com/google/android/libraries/mobiledatadownload/file",
+        "//java/com/google/android/libraries/mobiledatadownload/file/backends",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:file",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
         "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2",
         "//java/com/google/android/libraries/mobiledatadownload/file/openers:stream",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/proto:metadata_java_proto_lite",
         "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
+        "//javatests/com/google/android/libraries/mobiledatadownload/internal:MddTestUtil",
         "//javatests/com/google/android/libraries/mobiledatadownload/testing:TestHttpServer",
+        "//third_party/java/android_libs/downloader:contrib",
         "@android_sdk_linux",
-        "@androidx_test",
         "@com_google_guava_guava",
         "@com_google_runfiles",
         "@downloader",

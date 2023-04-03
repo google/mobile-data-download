@@ -34,22 +34,25 @@ import com.google.android.libraries.mobiledatadownload.internal.logging.NoOpEven
 import com.google.android.libraries.mobiledatadownload.lite.Downloader;
 import com.google.android.libraries.mobiledatadownload.monitor.DownloadProgressMonitor;
 import com.google.android.libraries.mobiledatadownload.monitor.NetworkUsageMonitor;
+import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
 
 /**
- * A Builder for the {@link MobileDataDownload}.
+ * A builder for {@link MobileDataDownload}.
+ *
+ * <p>
  *
  * <p>WARNING: Only one object should be built. Otherwise, there may be locking errors on the
  * underlying database and unnecessary memory consumption.
@@ -89,6 +92,7 @@ public final class MobileDataDownloadBuilder {
     componentBuilder = DaggerStandaloneComponent.builder();
   }
 
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setContext(Context context) {
     this.context = context.getApplicationContext();
     return this;
@@ -103,6 +107,7 @@ public final class MobileDataDownloadBuilder {
    * directory, and periodic backbround tasks. There is no sharing and no-dedup between instances.
    * Please talk to <internal>@ before using this.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setInstanceIdOptional(Optional<String> instanceIdOptional) {
     this.instanceIdOptional = instanceIdOptional;
     return this;
@@ -114,6 +119,7 @@ public final class MobileDataDownloadBuilder {
    * <p>NOTE: Control Executor must not be single thread executor otherwise it could lead to
    * deadlock or other side effects.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setControlExecutor(ListeningExecutorService controlExecutor) {
     Preconditions.checkNotNull(controlExecutor);
     // Executor that will execute tasks sequentially.
@@ -127,6 +133,7 @@ public final class MobileDataDownloadBuilder {
    * <p>If this is not set, then the client is responsible for refreshing the list of file groups in
    * MDD as and when they see fit.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder addFileGroupPopulator(FileGroupPopulator fileGroupPopulator) {
     this.fileGroupPopulatorList.add(fileGroupPopulator);
     return this;
@@ -139,6 +146,7 @@ public final class MobileDataDownloadBuilder {
    * <p>If this is not set, then the client is responsible for refreshing the list of file groups in
    * MDD as and when they see fit.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder addFileGroupPopulators(
       ImmutableList<FileGroupPopulator> fileGroupPopulators) {
     this.fileGroupPopulatorList.addAll(fileGroupPopulators);
@@ -150,24 +158,28 @@ public final class MobileDataDownloadBuilder {
    * can use GCM, FJD or Work Manager to schedule tasks, and then forward the notification to {@link
    * MobileDataDownload#handleTask(String)}.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setTaskScheduler(Optional<TaskScheduler> taskSchedulerOptional) {
     this.taskSchedulerOptional = taskSchedulerOptional;
     return this;
   }
 
   /** Set the optional Configurator which if present will be used by MDD to configure its flags. */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setConfiguratorOptional(Optional<Configurator> configurator) {
     this.configurator = configurator;
     return this;
   }
 
   /** Set the optional Logger which if present will be used by MDD to log events. */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setLoggerOptional(Optional<Logger> logger) {
     this.loggerOptional = logger;
     return this;
   }
 
   /** Set the flags otherwise default values will be used only. */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setFlagsOptional(Optional<Flags> flags) {
     this.flagsOptional = flags;
     return this;
@@ -176,6 +188,7 @@ public final class MobileDataDownloadBuilder {
   /**
    * Set the optional SilentFeedback which if present will be used by MDD to send silent feedbacks.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setSilentFeedbackOptional(
       Optional<SilentFeedback> silentFeedbackOptional) {
     this.silentFeedbackOptional = silentFeedbackOptional;
@@ -186,6 +199,7 @@ public final class MobileDataDownloadBuilder {
    * Set the MobStore SynchronousFileStorage. Ideally this should be the same object as the one used
    * by the client app to read files from MDD
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setFileStorage(SynchronousFileStorage fileStorage) {
     this.fileStorage = fileStorage;
     return this;
@@ -195,6 +209,7 @@ public final class MobileDataDownloadBuilder {
    * Set the NetworkUsageMonitor. This NetworkUsageMonitor instance must be the same instance that
    * is registered with SynchronousFileStorage.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setNetworkUsageMonitor(NetworkUsageMonitor networkUsageMonitor) {
     this.networkUsageMonitor = networkUsageMonitor;
     return this;
@@ -204,6 +219,7 @@ public final class MobileDataDownloadBuilder {
    * Set the DownloadProgressMonitor. This DownloadProgressMonitor instance must be the same
    * instance that is registered with SynchronousFileStorage.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setDownloadMonitorOptional(
       Optional<DownloadProgressMonitor> downloadMonitorOptional) {
     this.downloadMonitorOptional = downloadMonitorOptional;
@@ -214,6 +230,7 @@ public final class MobileDataDownloadBuilder {
    * Set the FileDownloader Supplier. MDD takes in a Supplier of FileDownload to support lazy
    * instantiation of the FileDownloader
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setFileDownloaderSupplier(
       Supplier<FileDownloader> fileDownloaderSupplier) {
     this.fileDownloaderSupplier = fileDownloaderSupplier;
@@ -221,6 +238,7 @@ public final class MobileDataDownloadBuilder {
   }
 
   /** Set the Delta file decoder. */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setDeltaDecoderOptional(
       Optional<DeltaDecoder> deltaDecoderOptional) {
     this.deltaDecoderOptional = deltaDecoderOptional;
@@ -235,6 +253,7 @@ public final class MobileDataDownloadBuilder {
    * shared as an optimization. Please talk to <internal>@ on how to setup a shared Foreground
    * Download Service.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setForegroundDownloadServiceOptional(
       Optional<Class<?>> foregroundDownloadServiceClass) {
     this.foregroundDownloadServiceClassOptional = foregroundDownloadServiceClass;
@@ -245,6 +264,7 @@ public final class MobileDataDownloadBuilder {
    * Sets the AccountSource that's used to wipeout account-related data at maintenance time. If this
    * method is not called, an account source based on AccountManager will be injected.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setAccountSourceOptional(
       Optional<AccountSource> accountSourceOptional) {
     this.accountSourceOptional = accountSourceOptional;
@@ -252,6 +272,7 @@ public final class MobileDataDownloadBuilder {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setCustomFileGroupValidatorOptional(
       Optional<CustomFileGroupValidator> customFileGroupValidatorOptional) {
     this.customFileGroupValidatorOptional = customFileGroupValidatorOptional;
@@ -263,6 +284,7 @@ public final class MobileDataDownloadBuilder {
    * sources. If this is not called, experiment ids are not propagated. See <internal> for more
    * details.
    */
+  @CanIgnoreReturnValue
   public MobileDataDownloadBuilder setExperimentationConfigOptional(
       Optional<ExperimentationConfig> experimentationConfigOptional) {
     this.experimentationConfigOptional = experimentationConfigOptional;
@@ -271,6 +293,7 @@ public final class MobileDataDownloadBuilder {
 
   // We use java.util.concurrent.Executor directly to create default Control Executor and
   // Download Executor.
+
   public MobileDataDownload build() {
     Preconditions.checkNotNull(context);
     Preconditions.checkNotNull(taskSchedulerOptional);
@@ -286,10 +309,10 @@ public final class MobileDataDownloadBuilder {
       // Submit commit task to sequentialControlExecutor to ensure that the commit task finishes
       // before any other API tasks can run.
       ListenableFuture<Void> commitFuture =
-          Futures.submitAsync(
+          PropagatedFutures.submitAsync(
               () -> configurator.get().commitToFlagSnapshot(), sequentialControlExecutor);
 
-      Futures.addCallback(
+      PropagatedFutures.addCallback(
           commitFuture,
           new FutureCallback<Void>() {
             @Override
@@ -380,6 +403,7 @@ public final class MobileDataDownloadBuilder {
         foregroundDownloadServiceClassOptional,
         flags,
         singleFileDownloader,
-        customFileGroupValidatorOptional);
+        customFileGroupValidatorOptional,
+        component.getTimeSource());
   }
 }

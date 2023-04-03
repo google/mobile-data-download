@@ -16,6 +16,8 @@ syntax = "proto2";
 
 package google.android.storage.common;
 
+import "google/protobuf/timestamp.proto";
+
 option java_package = "com.google.mobiledatadownload.testing";
 option java_outer_classname = "TestMessageProto";
 
@@ -24,6 +26,7 @@ message FooProto {
   optional bool boolean = 2;
   optional int32 integer = 3;
   optional bytes bytes = 4;
+  optional google.protobuf.Timestamp timestamp = 5;
 }
 
 message BarProto {

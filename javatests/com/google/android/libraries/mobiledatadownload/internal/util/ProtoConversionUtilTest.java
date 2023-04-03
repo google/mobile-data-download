@@ -20,6 +20,9 @@ import static com.google.common.truth.Truth.assertThat;
 import android.content.Context;
 import android.net.Uri;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.mobiledatadownload.internal.MetadataProto;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupBookkeeping;
+import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
 import com.google.android.libraries.mobiledatadownload.file.backends.JavaFileBackend;
@@ -40,9 +43,6 @@ import com.google.mobiledatadownload.TransformProto.CompressTransform;
 import com.google.mobiledatadownload.TransformProto.Transform;
 import com.google.mobiledatadownload.TransformProto.Transforms;
 import com.google.mobiledatadownload.TransformProto.ZipTransform;
-import com.google.mobiledatadownload.internal.MetadataProto;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupBookkeeping;
-import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.protobuf.ExtensionRegistryLite;
 import com.google.protobuf.contrib.android.ProtoParsers;
 import com.google.testing.util.TestUtil;
@@ -67,7 +67,7 @@ public final class ProtoConversionUtilTest {
   // The raw test data folder in google3.
   private static final String TEST_DATA_DIR =
       TestUtil.getRunfilesDir()
-          + "/google3/third_party/java_src/android_libs/mobiledatadownload/javatests/com/google/android/libraries/mobiledatadownload/internal/util/testdata/";
+          + "/third_party/java_src/android_libs/mobiledatadownload/javatests/com/google/android/libraries/mobiledatadownload/internal/util/testdata/";
   private static final File RAW_GROUP_WITH_EXTENSION =
       new File(TEST_DATA_DIR, "raw_group_with_extension");
 
@@ -146,7 +146,7 @@ public final class ProtoConversionUtilTest {
   public void convert_parseRawProtoWithExtensions() throws Exception {
     DataFileGroupInternal expected =
         ProtoConversionUtil.convert(
-                MddTestUtil.createDataFileGroup(/*fileGroupName=*/ "test-group", 2))
+                MddTestUtil.createDataFileGroup(/* fileGroupName= */ "test-group", 2))
             .toBuilder()
             .setBookkeeping(
                 DataFileGroupBookkeeping.newBuilder()

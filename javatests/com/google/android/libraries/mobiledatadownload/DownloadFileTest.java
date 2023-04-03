@@ -33,6 +33,7 @@ import com.google.android.libraries.mobiledatadownload.downloader.DownloadReques
 import com.google.android.libraries.mobiledatadownload.downloader.FileDownloader;
 import com.google.android.libraries.mobiledatadownload.file.SynchronousFileStorage;
 import com.google.android.libraries.mobiledatadownload.file.backends.AndroidFileBackend;
+import com.google.android.libraries.mobiledatadownload.foreground.ForegroundDownloadKey;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
 import com.google.android.libraries.mobiledatadownload.monitor.DownloadProgressMonitor;
 import com.google.android.libraries.mobiledatadownload.monitor.NetworkUsageMonitor;
@@ -181,7 +182,7 @@ public final class DownloadFileTest {
     mobileDataDownload =
         getMobileDataDownload(
             () -> mockFileDownloader,
-            /* foregroundDownloadServiceClassOptional = */ Optional.absent(),
+            /* foregroundDownloadServiceClassOptional= */ Optional.absent(),
             Optional.of(mockDownloadMonitor));
 
     singleFileDownloadRequest =
@@ -235,7 +236,7 @@ public final class DownloadFileTest {
     mobileDataDownload =
         getMobileDataDownload(
             createSuccessfulFileDownloaderSupplier(),
-            /* foregroundDownloadServiceClassOptional = */ Optional.absent(),
+            /* foregroundDownloadServiceClassOptional= */ Optional.absent(),
             Optional.of(downloadProgressMonitor));
 
     singleFileDownloadRequest =
@@ -262,7 +263,7 @@ public final class DownloadFileTest {
     mobileDataDownload =
         getMobileDataDownload(
             createFailingFileDownloaderSupplier(downloadException),
-            /* foregroundDownloadServiceClassOptional = */ Optional.absent(),
+            /* foregroundDownloadServiceClassOptional= */ Optional.absent(),
             Optional.of(downloadProgressMonitor));
 
     singleFileDownloadRequest =
@@ -338,7 +339,7 @@ public final class DownloadFileTest {
     mobileDataDownload =
         getMobileDataDownload(
             () -> mockFileDownloader,
-            /* foregroundDownloadServiceClassOptional = */ Optional.absent(),
+            /* foregroundDownloadServiceClassOptional= */ Optional.absent(),
             Optional.of(downloadProgressMonitor));
 
     // Without foreground service, download call should fail with IllegalStateException
@@ -358,7 +359,7 @@ public final class DownloadFileTest {
         getMobileDataDownload(
             () -> mockFileDownloader,
             Optional.of(this.getClass()),
-            /* downloadProgressMonitorOptional = */ Optional.absent());
+            /* downloadProgressMonitorOptional= */ Optional.absent());
 
     // Without monitor, download call should fail with IllegalStateException
     ListenableFuture<Void> downloadFuture =
@@ -565,10 +566,15 @@ public final class DownloadFileTest {
     // Use BlockingFileDownloader to control when the download will finish.
     mobileDataDownload = getMobileDataDownload(() -> blockingFileDownloader);
 
+    ForegroundDownloadKey foregroundDownloadKey =
+        ForegroundDownloadKey.ofSingleFile(DESTINATION_FILE_URI);
+
     ListenableFuture<Void> downloadFuture =
         mobileDataDownload.downloadFileWithForegroundService(singleFileDownloadRequest);
 
-    mobileDataDownload.cancelForegroundDownload(DESTINATION_FILE_URI.toString());
+    blockingFileDownloader.waitForDownloadStarted();
+
+    mobileDataDownload.cancelForegroundDownload(foregroundDownloadKey.toString());
 
     awaitAllExecutorsIdle();
 

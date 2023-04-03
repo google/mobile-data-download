@@ -17,6 +17,7 @@ package com.google.android.libraries.mobiledatadownload.file.openers;
 
 import com.google.android.libraries.mobiledatadownload.file.OpenContext;
 import com.google.android.libraries.mobiledatadownload.file.Opener;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.protobuf.ExtensionRegistryLite;
 import com.google.protobuf.MessageLite;
 import com.google.protobuf.Parser;
@@ -60,6 +61,7 @@ public final class ReadProtoOpener<T extends MessageLite> implements Opener<T> {
   }
 
   /** Adds an extension registry used while parsing the proto. */
+  @CanIgnoreReturnValue
   public ReadProtoOpener<T> withExtensionRegistry(ExtensionRegistryLite registry) {
     this.registry = registry;
     return this;

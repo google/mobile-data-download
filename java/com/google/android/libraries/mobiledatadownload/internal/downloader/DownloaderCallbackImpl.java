@@ -40,6 +40,8 @@ import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFluentF
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.io.ByteStreams;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
 import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
@@ -262,14 +264,21 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
         long fullFileSize = fileStorage.fileSize(target);
         long downloadedFileSize = fileStorage.fileSize(source);
         if (fullFileSize > downloadedFileSize) {
-          Void fileGroupStats = null;
+          DataDownloadFileGroupStats fileGroupStats =
+              DataDownloadFileGroupStats.newBuilder()
+                  .setFileGroupName(groupKey.getGroupName())
+                  .setFileGroupVersionNumber(fileGroupVersionNumber)
+                  .setBuildId(buildId)
+                  .setVariantId(variantId)
+                  .setOwnerPackage(groupKey.getOwnerPackage())
+                  .build();
           eventLogger.logMddNetworkSavings(
               fileGroupStats,
               0,
               fullFileSize,
               downloadedFileSize,
               dataFile.getFileId(),
-              /* deltaIndex = */ 0);
+              /* deltaIndex= */ 0);
         }
       }
       fileStorage.deleteFile(source);
@@ -303,7 +312,14 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
           .build();
     }
     try {
-      Void fileGroupStats = null;
+      DataDownloadFileGroupStats fileGroupStats =
+          DataDownloadFileGroupStats.newBuilder()
+              .setFileGroupName(groupKey.getGroupName())
+              .setFileGroupVersionNumber(fileGroupVersionNumber)
+              .setBuildId(buildId)
+              .setVariantId(variantId)
+              .setOwnerPackage(groupKey.getOwnerPackage())
+              .build();
       eventLogger.logMddNetworkSavings(
           fileGroupStats,
           0,
@@ -387,7 +403,7 @@ public class DownloaderCallbackImpl implements DownloaderCallback {
                     "%s: Checksum mismatch detected but the has already reached retry limit!"
                         + " Skipping removal for file %s",
                     TAG, checksum);
-                eventLogger.logEventSampled(0);
+                eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
               } else {
                 LogUtil.d(
                     "%s: Removing file and marking as corrupted due to checksum mismatch", TAG);

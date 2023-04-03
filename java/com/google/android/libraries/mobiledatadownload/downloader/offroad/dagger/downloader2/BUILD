@@ -14,6 +14,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -34,7 +35,6 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/file",
         "//java/com/google/android/libraries/mobiledatadownload/file/integration/downloader:downloader2",
         "//java/com/google/android/libraries/mobiledatadownload/monitor:DownloadProgressMonitor",
-        "@androidx_annotation_annotation",
         "@com_google_code_findbugs_jsr305",
         "@com_google_dagger",
         "@com_google_guava_guava",
@@ -47,9 +47,13 @@ android_library(
     name = "base_deps",
     srcs = ["BaseFileDownloaderDepsModule.java"],
     deps = [
+        "//java/com/google/android/libraries/mobiledatadownload/annotations",
         "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad:ExceptionHandler",
-        "@androidx_annotation_annotation",
+        "//java/com/google/android/libraries/mobiledatadownload/downloader/offroad/annotations:downloader2",
+        "//java/com/google/android/libraries/mobiledatadownload/internal/util:DirectoryUtil",
         "@com_google_dagger",
+        "@com_google_guava_guava",
         "@downloader",
+        "@javax_inject",
     ],
 )

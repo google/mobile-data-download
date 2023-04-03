@@ -15,6 +15,7 @@ load("@build_bazel_rules_android//android:rules.bzl", "android_binary", "android
 load("//java/com/google/android/libraries/mobiledatadownload/file/common/testing:build_defs.bzl", "android_test_multi_api")
 
 package(
+    default_applicable_licenses = ["//:license"],
     default_visibility = ["//:__subpackages__"],
     licenses = ["notice"],
 )
@@ -53,6 +54,7 @@ android_local_test(
 android_test_multi_api(
     name = "AssetFileBackendTest",
     size = "small",
+    timeout = "moderate",
     srcs = ["AssetFileBackendTest.java"],
     assets = [":test_assets"],
     assets_dir = "assets",
@@ -107,7 +109,8 @@ android_local_test(
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:account_manager",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:android",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:android_file_environment",
-        "@androidx_test",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing:robolectric",
         "@com_google_guava_guava",
         "@mockito",
         "@truth",
@@ -119,14 +122,17 @@ android_binary(
     testonly = 1,
     srcs = ["BlobStoreBackendTest.java"],
     manifest = "//javatests/com/google/android/libraries/mobiledatadownload/file:AndroidManifest.xml",
+    multidex = "legacy",
     deps = [
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:blob_uri",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:blobstore_backend",
         "//java/com/google/android/libraries/mobiledatadownload/file/backends:file_descriptor",
         "//java/com/google/android/libraries/mobiledatadownload/file/common",
         "//java/com/google/android/libraries/mobiledatadownload/file/common/internal:charsets",
+        "//java/com/google/android/libraries/mobiledatadownload/file/common/testing",
+        "@android_sdk_linux",
         "@androidx_test",
-        "@com_google_android_testing//:testrunner",
+        "@com_google_android_testing//:testrunner",  # unuseddeps: keep
         "@com_google_guava_guava",
         "@junit",
         "@truth",

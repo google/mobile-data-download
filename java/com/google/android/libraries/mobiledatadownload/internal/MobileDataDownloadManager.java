@@ -15,6 +15,9 @@
  */
 package com.google.android.libraries.mobiledatadownload.internal;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.util.concurrent.Futures.getDone;
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
 import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
@@ -22,9 +25,6 @@ import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
-import android.os.Build.VERSION;
-import android.os.Build.VERSION_CODES;
-import android.util.Pair;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.libraries.mobiledatadownload.FileSource;
 import com.google.android.libraries.mobiledatadownload.Flags;
@@ -33,8 +33,10 @@ import com.google.android.libraries.mobiledatadownload.annotations.InstanceId;
 import com.google.android.libraries.mobiledatadownload.file.transforms.TransformProtos;
 import com.google.android.libraries.mobiledatadownload.internal.FileGroupManager.GroupDownloadStatus;
 import com.google.android.libraries.mobiledatadownload.internal.annotations.SequentialControlExecutor;
+import com.google.android.libraries.mobiledatadownload.internal.collect.GroupKeyAndGroup;
 import com.google.android.libraries.mobiledatadownload.internal.downloader.FileValidator;
 import com.google.android.libraries.mobiledatadownload.internal.experimentation.DownloadStageManager;
+import com.google.android.libraries.mobiledatadownload.internal.logging.DownloadStateLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.EventLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.FileGroupStatsLogger;
 import com.google.android.libraries.mobiledatadownload.internal.logging.LogUtil;
@@ -49,21 +51,21 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.FluentFuture;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CheckReturnValue;
-import com.google.mobiledatadownload.TransformProto.Transforms;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile.ChecksumType;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
+import com.google.mobiledatadownload.TransformProto.Transforms;
 import com.google.protobuf.Any;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.concurrent.Executor;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.inject.Inject;
@@ -167,11 +169,12 @@ public class MobileDataDownloadManager {
     if (isInitialized) {
       return immediateVoidFuture();
     }
-    SharedPreferences prefs =
-        SharedPreferencesUtil.getSharedPreferences(context, MDD_MANAGER_METADATA, instanceId);
-    return PropagatedFluentFuture.from(Futures.immediateFuture(null))
+    return PropagatedFluentFuture.from(immediateVoidFuture())
         .transformAsync(
             voidArg -> {
+              SharedPreferences prefs =
+                  SharedPreferencesUtil.getSharedPreferences(
+                      context, MDD_MANAGER_METADATA, instanceId);
               // Offroad downloader migration. Since the migration has been enabled in gms
               // v18, most devices have migrated. For the remaining, we will clear MDD
               // storage.
@@ -185,7 +188,7 @@ public class MobileDataDownloadManager {
                     },
                     sequentialControlExecutor);
               }
-              return Futures.immediateFuture(null);
+              return immediateVoidFuture();
             },
             sequentialControlExecutor)
         .transformAsync(
@@ -195,10 +198,11 @@ public class MobileDataDownloadManager {
                     initSuccess -> {
                       if (!initSuccess) {
                         // This should be init before the shared file metadata.
-                        LogUtil.w("%s Failed to init shared file manager.", TAG);
+                        LogUtil.w(
+                            "%s Clearing MDD since FileManager failed or needs migration.", TAG);
                         return clearForInit();
                       }
-                      return Futures.immediateVoidFuture();
+                      return immediateVoidFuture();
                     },
                     sequentialControlExecutor),
             sequentialControlExecutor)
@@ -208,10 +212,11 @@ public class MobileDataDownloadManager {
                     sharedFilesMetadata.init(),
                     initSuccess -> {
                       if (!initSuccess) {
-                        LogUtil.w("%s Failed to init shared file metadata.", TAG);
+                        LogUtil.w(
+                            "%s Clearing MDD since FilesMetadata failed or needs migration.", TAG);
                         return clearForInit();
                       }
-                      return Futures.immediateVoidFuture();
+                      return immediateVoidFuture();
                     },
                     sequentialControlExecutor),
             sequentialControlExecutor)
@@ -243,8 +248,7 @@ public class MobileDataDownloadManager {
   // instead of boolean for failure
   public ListenableFuture<Boolean> addGroupForDownload(
       GroupKey groupKey, DataFileGroupInternal dataFileGroup) {
-    return addGroupForDownloadInternal(
-        groupKey, dataFileGroup, unused -> Futures.immediateFuture(true));
+    return addGroupForDownloadInternal(groupKey, dataFileGroup, unused -> immediateFuture(true));
   }
 
   public ListenableFuture<Boolean> addGroupForDownloadInternal(
@@ -258,52 +262,90 @@ public class MobileDataDownloadManager {
           // Check if the group we received is a valid group.
           if (!DataFileGroupValidator.isValidGroup(dataFileGroup, context, flags)) {
             eventLogger.logEventSampled(
-                0,
+                MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
                 dataFileGroup.getGroupName(),
                 dataFileGroup.getFileGroupVersionNumber(),
                 dataFileGroup.getBuildId(),
                 dataFileGroup.getVariantId());
-            return Futures.immediateFuture(false);
+            return immediateFuture(false);
           }
 
           DataFileGroupInternal populatedDataFileGroup = mayPopulateChecksum(dataFileGroup);
           try {
-            return PropagatedFutures.transformAsync(
-                fileGroupManager.addGroupForDownload(groupKey, populatedDataFileGroup),
-                addGroupForDownloadResult -> {
-                  if (addGroupForDownloadResult) {
-                    return PropagatedFutures.transform(
-                        fileGroupManager.verifyPendingGroupDownloaded(
-                            groupKey, populatedDataFileGroup, customFileGroupValidator),
-                        verifyPendingGroupDownloadedResult -> {
-                          if (verifyPendingGroupDownloadedResult
-                              == GroupDownloadStatus.DOWNLOADED) {
-                            eventLogger.logEventSampled(
-                                0,
-                                populatedDataFileGroup.getGroupName(),
-                                populatedDataFileGroup.getFileGroupVersionNumber(),
-                                populatedDataFileGroup.getBuildId(),
-                                populatedDataFileGroup.getVariantId());
-                          }
-                          return true;
-                        },
-                        sequentialControlExecutor);
-                  }
-                  return Futures.immediateFuture(true);
-                },
-                sequentialControlExecutor);
+            return PropagatedFluentFuture.from(
+                    fileGroupManager.addGroupForDownload(groupKey, populatedDataFileGroup))
+                .transformAsync(
+                    addGroupForDownloadResult -> {
+                      if (addGroupForDownloadResult) {
+                        return maybeMarkPendingGroupAsDownloadedImmediately(
+                            groupKey, customFileGroupValidator);
+                      }
+                      return immediateVoidFuture();
+                    },
+                    sequentialControlExecutor)
+                .transform(unused -> true, sequentialControlExecutor);
           } catch (ExpiredFileGroupException
               | UninstalledAppException
               | ActivationRequiredForGroupException e) {
             LogUtil.w("%s %s", TAG, e.getClass());
-            return Futures.immediateFailedFuture(e);
+            return immediateFailedFuture(e);
           } catch (IOException e) {
             LogUtil.e("%s %s", TAG, e.getClass());
             silentFeedback.send(e, "Failed to add group to MDD");
-            return Futures.immediateFailedFuture(e);
+            return immediateFailedFuture(e);
           }
         },
         sequentialControlExecutor);
+  }
+
+  /**
+   * Helper method to mark a group as downloaded immediately.
+   *
+   * <p>This method checks if a pending group is already downloaded and updates its state in MDD's
+   * metadata if it is downloaded. Additionally, a download complete immediate event is logged for
+   * this case.
+   *
+   * <p>If no pending version of the group is available, this method is a no-op.
+   *
+   * <p>NOTE: This method is only meant to be called during addFileGroup, where it makes sense to
+   * log the immediate download complete event.
+   */
+  private ListenableFuture<Void> maybeMarkPendingGroupAsDownloadedImmediately(
+      GroupKey groupKey, AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
+    ListenableFuture<@NullableType DataFileGroupInternal> pendingGroupFuture =
+        fileGroupManager.getFileGroup(groupKey, /* downloaded= */ false);
+    return PropagatedFluentFuture.from(pendingGroupFuture)
+        .transformAsync(
+            pendingGroup -> {
+              if (pendingGroup == null) {
+                // send pending state to skip logging the event
+                return immediateFuture(GroupDownloadStatus.PENDING);
+              }
+              // Verify the group is downloaded (and commit this to metadata).
+              return fileGroupManager.verifyGroupDownloaded(
+                  groupKey,
+                  pendingGroup,
+                  /* removePendingVersion= */ true,
+                  customFileGroupValidator,
+                  DownloadStateLogger.forDownload(eventLogger));
+            },
+            sequentialControlExecutor)
+        .transformAsync(
+            verifyPendingGroupDownloadedResult -> {
+              if (verifyPendingGroupDownloadedResult == GroupDownloadStatus.DOWNLOADED) {
+                // Use checkNotNull to satisfy nullness checker -- if the group status is
+                // downloaded, pendingGroup must be non-null.
+                DataFileGroupInternal group = checkNotNull(getDone(pendingGroupFuture));
+                eventLogger.logEventSampled(
+                    MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+                    group.getGroupName(),
+                    group.getFileGroupVersionNumber(),
+                    group.getBuildId(),
+                    group.getVariantId());
+              }
+              return immediateVoidFuture();
+            },
+            sequentialControlExecutor);
   }
 
   /**
@@ -321,7 +363,7 @@ public class MobileDataDownloadManager {
       throws SharedFileMissingException, IOException {
     LogUtil.d("%s removeFileGroup %s", TAG, groupKey.getGroupName());
 
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg -> fileGroupManager.removeFileGroup(groupKey, pendingOnly),
         sequentialControlExecutor);
@@ -339,7 +381,7 @@ public class MobileDataDownloadManager {
   public ListenableFuture<Void> removeFileGroups(List<GroupKey> groupKeys) {
     LogUtil.d("%s removeFileGroups for %d groups", TAG, groupKeys.size());
 
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(), voidArg -> fileGroupManager.removeFileGroups(groupKeys), sequentialControlExecutor);
   }
 
@@ -356,65 +398,115 @@ public class MobileDataDownloadManager {
       GroupKey groupKey, boolean downloaded) {
     LogUtil.d("%s getFileGroup %s %s", TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
 
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg -> fileGroupManager.getFileGroup(groupKey, downloaded),
         sequentialControlExecutor);
   }
 
   /** Returns a future resolving to a list of all pending and downloaded groups in MDD. */
-  public ListenableFuture<List<Pair<GroupKey, DataFileGroupInternal>>> getAllFreshGroups() {
+  public ListenableFuture<List<GroupKeyAndGroup>> getAllFreshGroups() {
     LogUtil.d("%s getAllFreshGroups", TAG);
 
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(), voidArg -> fileGroupsMetadata.getAllFreshGroups(), sequentialControlExecutor);
   }
 
   /**
-   * Returns a future resolving to the URI at which the given data file is located on the disc.
-   * Returns null if there was error in generating the URI.
+   * Returns a map of on-device URIs for the requested {@link DataFileGroupInternal}.
+   *
+   * <p>If a DataFile does not have an on-device URI (e.g. the download for the file is not
+   * completed), The returned map will not contain an entry for that DataFile.
+   *
+   * <p>If the group supports isolated structures, verification of the isolated structure can be
+   * controlled. If a file fails the verification (either the symlink is not created, or does not
+   * point to the correct location), it will be omitted from the map.
+   *
+   * <p>NOTE: Verification should only be turned off on critical access paths where latency must be
+   * minimized. This may lead to an edge case where the isolated structure becomes broken and/or
+   * corrupted until MDD can fix the structure in its daily maintenance task.
+   */
+  public ListenableFuture<ImmutableMap<DataFile, Uri>> getDataFileUris(
+      DataFileGroupInternal dataFileGroup, boolean verifyIsolatedStructure) {
+    LogUtil.d("%s: getDataFileUris %s", TAG, dataFileGroup.getGroupName());
+
+    boolean useIsolatedStructure = FileGroupUtil.isIsolatedStructureAllowed(dataFileGroup);
+
+    // If isolated structure is supported, get the isolated uris (symlinks which point to the
+    // on-device location). These can be calculated synchronously and before init since they only
+    // require the file group metadata.
+    ImmutableMap.Builder<DataFile, Uri> isolatedUriMapBuilder = ImmutableMap.builder();
+    if (useIsolatedStructure) {
+      isolatedUriMapBuilder.putAll(fileGroupManager.getIsolatedFileUris(dataFileGroup));
+    }
+    ImmutableMap<DataFile, Uri> isolatedUriMap = isolatedUriMapBuilder.buildKeepingLast();
+
+    return PropagatedFluentFuture.from(init())
+        .transformAsync(
+            unused -> {
+              // Lookup on-device uris only if required to reduce latency. On-device lookups happen
+              // asynchronously since we need to access the latest underlying file metadata.
+              // 1. The group does not support an isolated structure
+              // 2. The group supports an isolated structure AND verification of that structure
+              //    should occur.
+              if (!useIsolatedStructure || verifyIsolatedStructure) {
+                return fileGroupManager.getOnDeviceUris(dataFileGroup);
+              }
+
+              // Return an empty map here since we won't be using the on-device uris.
+              return immediateFuture(ImmutableMap.of());
+            },
+            sequentialControlExecutor)
+        .transform(
+            onDeviceUriMap -> {
+              if (useIsolatedStructure) {
+                if (verifyIsolatedStructure) {
+                  // Return verified map of isolated uris.
+                  return fileGroupManager.verifyIsolatedFileUris(isolatedUriMap, onDeviceUriMap);
+                }
+
+                // Verification not required, return isolated uris.
+                return isolatedUriMap;
+              }
+
+              // Isolated structure are not in use, return on-device uris.
+              return onDeviceUriMap;
+            },
+            sequentialControlExecutor)
+        .transform(
+            selectedUriMap -> {
+              // Before returning uri map, apply read transforms if required.
+              ImmutableMap.Builder<DataFile, Uri> finalUriMapBuilder = ImmutableMap.builder();
+              for (Entry<DataFile, Uri> entry : selectedUriMap.entrySet()) {
+                DataFile dataFile = entry.getKey();
+                // Skip entries which have a null uri value.
+                if (entry.getValue() == null) {
+                  continue;
+                }
+                if (dataFile.hasReadTransforms()) {
+                  finalUriMapBuilder.put(
+                      dataFile,
+                      applyTransformsToFileUri(entry.getValue(), dataFile.getReadTransforms()));
+                } else {
+                  finalUriMapBuilder.put(entry);
+                }
+              }
+              return finalUriMapBuilder.buildKeepingLast();
+            },
+            sequentialControlExecutor);
+  }
+
+  /**
+   * Convenience method for {@link #getDataFileUris(DataFileGroupInternal, boolean)} when only a
+   * single data file is required.
    */
   public ListenableFuture<@NullableType Uri> getDataFileUri(
-      DataFile dataFile, DataFileGroupInternal dataFileGroup) {
+      DataFile dataFile, DataFileGroupInternal dataFileGroup, boolean verifyIsolatedStructure) {
     LogUtil.d("%s getDataFileUri %s %s", TAG, dataFile.getFileId(), dataFileGroup.getGroupName());
-    return Futures.transformAsync(
-        init(),
-        voidArg -> {
-          ListenableFuture<@NullableType Uri> onDeviceUriFuture =
-              fileGroupManager.getOnDeviceUri(dataFile, dataFileGroup);
-          return Futures.transform(
-              onDeviceUriFuture,
-              onDeviceUri -> {
-                Uri finalOnDeviceUri = onDeviceUri;
-                // Check if file group should use isolated uri
-                if (finalOnDeviceUri != null
-                    && FileGroupUtil.isIsolatedStructureAllowed(dataFileGroup)
-                    && VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) {
-                  try {
-                    finalOnDeviceUri =
-                        fileGroupManager.getAndVerifyIsolatedFileUri(
-                            finalOnDeviceUri, dataFile, dataFileGroup);
-                  } catch (IOException e) {
-                    LogUtil.e(
-                        e,
-                        "%s getDataFileUri %s %s unable to get isolated file uri!",
-                        TAG,
-                        dataFile.getFileId(),
-                        dataFileGroup.getGroupName());
-                    finalOnDeviceUri = null;
-                  }
-                }
-
-                if (finalOnDeviceUri != null && dataFile.hasReadTransforms()) {
-                  finalOnDeviceUri =
-                      applyTransformsToFileUri(finalOnDeviceUri, dataFile.getReadTransforms());
-                }
-
-                return finalOnDeviceUri;
-              },
-              sequentialControlExecutor);
-        },
-        sequentialControlExecutor);
+    return PropagatedFutures.transform(
+        getDataFileUris(dataFileGroup, verifyIsolatedStructure),
+        dataFileUris -> dataFileUris.get(dataFile),
+        directExecutor());
   }
 
   private Uri applyTransformsToFileUri(Uri fileUri, Transforms transforms) {
@@ -428,7 +520,7 @@ public class MobileDataDownloadManager {
   }
 
   /**
-   * Import inline files into an exising DataFileGroup and update its metadata accordingly.
+   * Import inline files into an existing DataFileGroup and update its metadata accordingly.
    *
    * @param groupKey The key of file group to update
    * @param buildId build id to identify the file group to update
@@ -448,7 +540,7 @@ public class MobileDataDownloadManager {
       Optional<Any> customPropertyOptional,
       AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
     LogUtil.d("%s: importFiles %s %s", TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg ->
             fileGroupManager.importFilesIntoFileGroup(
@@ -476,7 +568,7 @@ public class MobileDataDownloadManager {
       AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
     LogUtil.d(
         "%s downloadFileGroup %s %s", TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg ->
             fileGroupManager.downloadFileGroup(
@@ -494,7 +586,7 @@ public class MobileDataDownloadManager {
   public ListenableFuture<Boolean> setGroupActivation(GroupKey groupKey, boolean activation) {
     LogUtil.d(
         "%s setGroupActivation %s %s", TAG, groupKey.getGroupName(), groupKey.getOwnerPackage());
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg -> fileGroupManager.setGroupActivation(groupKey, activation),
         sequentialControlExecutor);
@@ -509,11 +601,11 @@ public class MobileDataDownloadManager {
   public ListenableFuture<Void> downloadAllPendingGroups(
       boolean onWifi, AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
     LogUtil.d("%s downloadAllPendingGroups on wifi = %s", TAG, onWifi);
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg -> {
           if (flags.mddEnableDownloadPendingGroups()) {
-            eventLogger.logEventSampled(0);
+            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
             return fileGroupManager.scheduleAllPendingGroupsForDownload(
                 onWifi, customFileGroupValidator);
           }
@@ -529,11 +621,11 @@ public class MobileDataDownloadManager {
   public ListenableFuture<Void> verifyAllPendingGroups(
       AsyncFunction<DataFileGroupInternal, Boolean> customFileGroupValidator) {
     LogUtil.d("%s verifyAllPendingGroups", TAG);
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg -> {
           if (flags.mddEnableVerifyPendingGroups()) {
-            eventLogger.logEventSampled(0);
+            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
             return fileGroupManager.verifyAllPendingGroupsDownloaded(customFileGroupValidator);
           }
           return immediateVoidFuture();
@@ -552,7 +644,7 @@ public class MobileDataDownloadManager {
   public ListenableFuture<Void> maintenance() {
     LogUtil.d("%s Running maintenance", TAG);
 
-    return FluentFuture.from(init())
+    return PropagatedFluentFuture.from(init())
         .transformAsync(voidArg -> getAndResetDaysSinceLastMaintenance(), directExecutor())
         .transformAsync(
             daysSinceLastLog -> {
@@ -582,7 +674,7 @@ public class MobileDataDownloadManager {
 
               if (flags.mddEnableGarbageCollection()) {
                 maintenanceFutures.add(expirationHandler.updateExpiration());
-                eventLogger.logEventSampled(0);
+                eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
               }
 
               // Log daily file group stats.
@@ -601,18 +693,27 @@ public class MobileDataDownloadManager {
                       context, MDD_MANAGER_METADATA, instanceId);
               prefs.edit().remove(MDD_PH_CONFIG_VERSION).remove(MDD_PH_CONFIG_VERSION_TS).commit();
 
-              return Futures.whenAllComplete(maintenanceFutures)
+              return PropagatedFutures.whenAllComplete(maintenanceFutures)
                   .call(() -> null, sequentialControlExecutor);
             },
             sequentialControlExecutor);
   }
 
+  /**
+   * Removes expired FileGroups (whether active or stale) and deletes files no longer referenced by
+   * a FileGroup.
+   */
+  public ListenableFuture<Void> removeExpiredGroupsAndFiles() {
+    return PropagatedFluentFuture.from(init())
+        .transformAsync(voidArg -> expirationHandler.updateExpiration(), sequentialControlExecutor);
+  }
+
   /** Dumps the current internal state of the MDD manager. */
   public ListenableFuture<Void> dump(final PrintWriter writer) {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg ->
-            Futures.transformAsync(
+            PropagatedFutures.transformAsync(
                 fileGroupManager.dump(writer),
                 voidParam -> sharedFileManager.dump(writer),
                 sequentialControlExecutor),
@@ -622,7 +723,7 @@ public class MobileDataDownloadManager {
   /** Checks to see if a flag change requires MDD to clear its data. */
   public ListenableFuture<Void> checkResetTrigger() {
     LogUtil.d("%s checkResetTrigger", TAG);
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         init(),
         voidArg -> {
           SharedPreferences prefs =
@@ -637,7 +738,7 @@ public class MobileDataDownloadManager {
           if (savedResetValue < currentResetValue) {
             prefs.edit().putInt(RESET_TRIGGER, currentResetValue).commit();
             LogUtil.d("%s Received reset trigger. Clearing all Mdd data.", TAG);
-            eventLogger.logEventSampled(0);
+            eventLogger.logEventSampled(MddClientEvent.Code.EVENT_CODE_UNSPECIFIED);
             return clearAllFilesAndMetadata();
           }
           return immediateVoidFuture();
@@ -692,12 +793,12 @@ public class MobileDataDownloadManager {
 
   /* Clear all metadata and files, also cancel pending download. */
   private ListenableFuture<Void> clearAllFilesAndMetadata() {
-    return Futures.transformAsync(
+    return PropagatedFutures.transformAsync(
         // Need to cancel download after MDD is already initialized.
         sharedFileManager.cancelDownloadAndClear(),
         voidArg1 ->
             // The metadata files should be cleared after the classes have been cleared.
-            Futures.transformAsync(
+            PropagatedFutures.transformAsync(
                 sharedFilesMetadata.clear(),
                 voidArg2 -> fileGroupsMetadata.clear(),
                 sequentialControlExecutor),
@@ -772,7 +873,7 @@ public class MobileDataDownloadManager {
       return immediateFuture(DEFAULT_DAYS_SINCE_LAST_MAINTENANCE);
     }
 
-    return FluentFuture.from(loggingStateStore.getAndResetDaysSinceLastMaintenance())
+    return PropagatedFluentFuture.from(loggingStateStore.getAndResetDaysSinceLastMaintenance())
         .catching(
             IOException.class,
             exception -> {
