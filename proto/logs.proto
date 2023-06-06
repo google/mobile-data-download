@@ -17,9 +17,8 @@ syntax = "proto2";
 
 package mobiledatadownload.logs;
 
-import "proto/log_enums.proto";
+import "log_enums.proto";
 
-option jspb_use_correct_proto2_semantics = false;  // <internal>
 option java_package = "com.google.mobiledatadownload";
 option java_outer_classname = "LogProto";
 

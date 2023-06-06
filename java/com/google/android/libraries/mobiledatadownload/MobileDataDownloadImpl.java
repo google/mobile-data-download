@@ -66,12 +66,12 @@ import com.google.mobiledatadownload.ClientConfigProto.ClientFile;
 import com.google.mobiledatadownload.ClientConfigProto.ClientFileGroup;
 import com.google.mobiledatadownload.DownloadConfigProto;
 import com.google.mobiledatadownload.DownloadConfigProto.DataFileGroup;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions;
 import com.google.mobiledatadownload.internal.MetadataProto.DownloadConditions.DeviceNetworkPolicy;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
-import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import com.google.protobuf.Any;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.io.ByteArrayOutputStream;
@@ -518,9 +518,50 @@ class MobileDataDownloadImpl implements MobileDataDownload {
                   readDataFileGroupRequest.variantIdOptional());
           return PropagatedFutures.transformAsync(
               mobileDataDownloadManager.getFileGroup(groupKey, /* downloaded= */ true),
-              internalFileGroup -> immediateFuture(ProtoConversionUtil.reverse(internalFileGroup)),
+              internalFileGroup -> {
+                if (internalFileGroup == null) {
+                  return immediateFailedFuture(
+                      DownloadException.builder()
+                          .setDownloadResultCode(DownloadResultCode.GROUP_NOT_FOUND_ERROR)
+                          .setMessage("Requested group not found.")
+                          .build());
+                }
+                return immediateFuture(ProtoConversionUtil.reverse(internalFileGroup));
+              },
               sequentialControlExecutor);
         },
+        sequentialControlExecutor);
+  }
+
+  @Override
+  public ListenableFuture<ImmutableList<DataFileGroup>> readDataFileGroupsByFilter(
+      ReadDataFileGroupsByFilterRequest request) {
+    return futureSerializer.submitAsync(
+        () ->
+            PropagatedFutures.transformAsync(
+                mobileDataDownloadManager.getAllFreshGroups(),
+                freshGroups -> {
+                  ImmutableList<GroupKeyAndGroup> filteredGroups =
+                      filterGroups(
+                          request.includeAllGroups(),
+                          request.groupNameOptional(),
+                          request.groupWithNoAccountOnly(),
+                          request.accountOptional(),
+                          request.downloadedOptional(),
+                          freshGroups);
+                  ImmutableList.Builder<DataFileGroup> dataFileGroupsBuilder =
+                      ImmutableList.<DataFileGroup>builder();
+                  for (GroupKeyAndGroup keyAndGroup : filteredGroups) {
+                    try {
+                      dataFileGroupsBuilder.add(
+                          ProtoConversionUtil.reverse(keyAndGroup.dataFileGroup()));
+                    } catch (InvalidProtocolBufferException e) {
+                      return immediateFailedFuture(e);
+                    }
+                  }
+                  return immediateFuture(dataFileGroupsBuilder.build());
+                },
+                sequentialControlExecutor),
         sequentialControlExecutor);
   }
 
@@ -710,12 +751,22 @@ class MobileDataDownloadImpl implements MobileDataDownload {
     return futureSerializer.submitAsync(
         () ->
             PropagatedFutures.transformAsync(
-                mobileDataDownloadManager.getAllFreshGroups(),
-                allFreshGroupKeyAndGroups -> {
+                PropagatedFutures.transform(
+                    mobileDataDownloadManager.getAllFreshGroups(),
+                    allFreshGroups ->
+                        filterGroups(
+                            getFileGroupsByFilterRequest.includeAllGroups(),
+                            getFileGroupsByFilterRequest.groupNameOptional(),
+                            getFileGroupsByFilterRequest.groupWithNoAccountOnly(),
+                            getFileGroupsByFilterRequest.accountOptional(),
+                            Optional.absent(),
+                            allFreshGroups),
+                    sequentialControlExecutor),
+                filteredGroupKeyAndGroups -> {
                   ListenableFuture<ImmutableList.Builder<ClientFileGroup>>
                       clientFileGroupsBuilderFuture =
                           immediateFuture(ImmutableList.<ClientFileGroup>builder());
-                  for (GroupKeyAndGroup groupKeyAndGroup : allFreshGroupKeyAndGroups) {
+                  for (GroupKeyAndGroup groupKeyAndGroup : filteredGroupKeyAndGroups) {
                     clientFileGroupsBuilderFuture =
                         PropagatedFutures.transformAsync(
                             clientFileGroupsBuilderFuture,
@@ -723,28 +774,23 @@ class MobileDataDownloadImpl implements MobileDataDownload {
                               GroupKey groupKey = groupKeyAndGroup.groupKey();
                               DataFileGroupInternal dataFileGroup =
                                   groupKeyAndGroup.dataFileGroup();
-                              if (applyFilter(
-                                  getFileGroupsByFilterRequest, groupKey, dataFileGroup)) {
-                                return PropagatedFutures.transform(
-                                    createClientFileGroupAndLogQueryStats(
-                                        groupKey,
-                                        dataFileGroup,
-                                        groupKey.getDownloaded(),
-                                        getFileGroupsByFilterRequest.preserveZipDirectories(),
-                                        getFileGroupsByFilterRequest.verifyIsolatedStructure()),
-                                    clientFileGroup -> {
-                                      if (clientFileGroup != null) {
-                                        clientFileGroupsBuilder.add(clientFileGroup);
-                                      }
-                                      return clientFileGroupsBuilder;
-                                    },
-                                    sequentialControlExecutor);
-                              }
-                              return immediateFuture(clientFileGroupsBuilder);
+                              return PropagatedFutures.transform(
+                                  createClientFileGroupAndLogQueryStats(
+                                      groupKey,
+                                      dataFileGroup,
+                                      groupKey.getDownloaded(),
+                                      getFileGroupsByFilterRequest.preserveZipDirectories(),
+                                      getFileGroupsByFilterRequest.verifyIsolatedStructure()),
+                                  clientFileGroup -> {
+                                    if (clientFileGroup != null) {
+                                      clientFileGroupsBuilder.add(clientFileGroup);
+                                    }
+                                    return clientFileGroupsBuilder;
+                                  },
+                                  sequentialControlExecutor);
                             },
                             sequentialControlExecutor);
                   }
-
                   return PropagatedFutures.transform(
                       clientFileGroupsBuilderFuture,
                       ImmutableList.Builder::build,
@@ -754,33 +800,65 @@ class MobileDataDownloadImpl implements MobileDataDownload {
         sequentialControlExecutor);
   }
 
-  // Perform filtering using options from GetFileGroupsByFilterRequest
-  private static boolean applyFilter(
-      GetFileGroupsByFilterRequest getFileGroupsByFilterRequest,
-      GroupKey groupKey,
-      DataFileGroupInternal fileGroup) {
-    if (getFileGroupsByFilterRequest.includeAllGroups()) {
-      return true;
+  private static ImmutableList<GroupKeyAndGroup> filterGroups(
+      boolean includeAllGroups,
+      Optional<String> groupNameOptional,
+      boolean groupWithNoAccountOnly,
+      Optional<Account> accountOptional,
+      Optional<Boolean> downloadedOptional,
+      List<GroupKeyAndGroup> allGroupKeyAndGroups) {
+    var builder = ImmutableList.<GroupKeyAndGroup>builder();
+    if (includeAllGroups) {
+      builder.addAll(allGroupKeyAndGroups);
+      return builder.build();
     }
 
+    for (GroupKeyAndGroup groupKeyAndGroup : allGroupKeyAndGroups) {
+      GroupKey groupKey = groupKeyAndGroup.groupKey();
+      DataFileGroupInternal dataFileGroup = groupKeyAndGroup.dataFileGroup();
+      if (applyFilter(
+          groupNameOptional,
+          groupWithNoAccountOnly,
+          accountOptional,
+          downloadedOptional,
+          groupKey,
+          dataFileGroup)) {
+        builder.add(groupKeyAndGroup);
+      }
+    }
+    return builder.build();
+  }
+
+  /** Check if given data matches with {@code groupKey} and {@code fileGroup}. */
+  private static boolean applyFilter(
+      Optional<String> groupNameOptional,
+      boolean groupWithNoAccountOnly,
+      Optional<Account> accountOptional,
+      Optional<Boolean> downloadedOptional,
+      GroupKey groupKey,
+      DataFileGroupInternal fileGroup) {
     // If request filters by group name, ensure name is equal
-    Optional<String> groupNameOptional = getFileGroupsByFilterRequest.groupNameOptional();
     if (groupNameOptional.isPresent()
         && !TextUtils.equals(groupNameOptional.get(), groupKey.getGroupName())) {
       return false;
     }
 
     // When the caller requests account independent groups only.
-    if (getFileGroupsByFilterRequest.groupWithNoAccountOnly()) {
+    if (groupWithNoAccountOnly) {
       return !groupKey.hasAccount();
     }
 
     // When the caller requests account dependent groups as well.
-    if (getFileGroupsByFilterRequest.accountOptional().isPresent()
-        && !AccountUtil.serialize(getFileGroupsByFilterRequest.accountOptional().get())
-            .equals(groupKey.getAccount())) {
+    if (accountOptional.isPresent()
+        && !AccountUtil.serialize(accountOptional.get()).equals(groupKey.getAccount())) {
       return false;
     }
+
+    if (downloadedOptional.isPresent()
+        && !downloadedOptional.get().equals(groupKey.getDownloaded())) {
+      return false;
+    }
+
     return true;
   }
 

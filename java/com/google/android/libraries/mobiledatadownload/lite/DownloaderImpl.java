@@ -438,7 +438,7 @@ final class DownloaderImpl implements Downloader {
                     notificationManager.notify(notificationKey, notification.build());
                   } else {
                     NotificationUtil.cancelNotificationForKey(
-                        context, downloadRequest.destinationFileUri().toString());
+                        context, foregroundDownloadKey.toString());
                   }
 
                   return immediateVoidFuture();

@@ -13,11 +13,10 @@
 // limitations under the License.
 syntax = "proto2";
 
-package com.google.android.libraries.mdi.download;
+package com.google.android.libraries.mobiledatadownload;
 
 import "google/protobuf/any.proto";
 
-option jspb_use_correct_proto2_semantics = false;  // <internal>
 option java_package = "com.google.mobiledatadownload";
 option java_outer_classname = "ClientConfigProto";
 option objc_class_prefix = "ICN";

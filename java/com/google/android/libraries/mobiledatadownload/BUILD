@@ -36,6 +36,7 @@ android_library(
         "MobileDataDownload.java",
         "MobileDataDownloadImpl.java",
         "ReadDataFileGroupRequest.java",
+        "ReadDataFileGroupsByFilterRequest.java",
         "RemoveFileGroupRequest.java",
         "RemoveFileGroupsByFilterRequest.java",
         "RemoveFileGroupsByFilterResponse.java",

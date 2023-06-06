@@ -44,6 +44,7 @@ android_library(
         "//java/com/google/android/libraries/mobiledatadownload/internal/util:DownloadFutureMap",
         "//java/com/google/android/libraries/mobiledatadownload/tracing",
         "//java/com/google/android/libraries/mobiledatadownload/tracing:concurrent",
+        "@androidx_annotation_annotation",
         "@androidx_core_core",
         "@com_google_auto_value",
         "@com_google_errorprone_error_prone_annotations",

@@ -35,11 +35,11 @@ import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupUt
 import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
-import com.google.mobiledatadownload.LogEnumsProto.MddClientEvent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
