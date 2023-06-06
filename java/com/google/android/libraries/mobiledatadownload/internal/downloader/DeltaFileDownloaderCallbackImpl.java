@@ -38,13 +38,13 @@ import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures
 import com.google.common.base.Ascii;
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFile;
 import com.google.mobiledatadownload.internal.MetadataProto.DataFileGroupInternal.AllowedReaders;
 import com.google.mobiledatadownload.internal.MetadataProto.DeltaFile;
 import com.google.mobiledatadownload.internal.MetadataProto.FileStatus;
 import com.google.mobiledatadownload.internal.MetadataProto.GroupKey;
 import com.google.mobiledatadownload.internal.MetadataProto.NewFileKey;
-import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 

@@ -20,7 +20,6 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import androidx.annotation.VisibleForTesting;
 import com.google.android.libraries.mobiledatadownload.TimeSource;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupsMetadataUtil;
 import com.google.android.libraries.mobiledatadownload.internal.util.FileGroupsMetadataUtil.GroupKeyDeserializationException;
@@ -55,7 +54,7 @@ public final class SharedPreferencesLoggingState implements LoggingStateStore {
 
   private static final String LAST_MAINTENANCE_RUN_SECS_KEY = "last_maintenance_secs";
 
-  @VisibleForTesting static final String SALT_KEY = "stable_log_sampling_salt";
+  private static final String SALT_KEY = "stable_log_sampling_salt";
   private static final String SALT_TIMESTAMP_MILLIS_KEY = "log_sampling_salt_set_timestamp_millis";
 
   private final Supplier<SharedPreferences> sharedPrefs;

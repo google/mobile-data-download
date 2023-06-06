@@ -14,7 +14,7 @@
 package(
     default_applicable_licenses = ["//:license"],
     default_visibility = [
-        "//:__subpackages__",
+        "//visibility:public",
     ],
     licenses = ["notice"],
 )
@@ -23,7 +23,6 @@ proto_library(
     name = "metadata_proto",
     srcs = ["metadata.proto"],
     cc_api_version = 2,
-    deps = [],
     alwayslink = 1,
 )
 

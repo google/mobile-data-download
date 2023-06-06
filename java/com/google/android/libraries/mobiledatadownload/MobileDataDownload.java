@@ -94,6 +94,25 @@ public interface MobileDataDownload {
   }
 
   /**
+   * Gets DataFileGroup definitions that were added to MDD by filter. This API cannot be used to
+   * access files.
+   *
+   * <p>Only present fields in {@link ReadDataFileGroupsByFilterRequest} will be used to perform the
+   * filtering. For example, if no account is specified in the filter, file groups won't be filtered
+   * based on account.
+   *
+   * @param readDataFileGroupsByFilterRequest The request to get multiple data file groups after
+   *     filtering.
+   * @return The ListenableFuture that will resolve to a list of the requested data file groups.
+   *     This ListenableFuture will resolve to all data file groups when {@code
+   *     readDataFileGroupsByFilterRequest.includeAllGroups} is true.
+   */
+  default ListenableFuture<ImmutableList<DataFileGroup>> readDataFileGroupsByFilter(
+      ReadDataFileGroupsByFilterRequest readDataFileGroupsByFilterRequest) {
+    throw new UnsupportedOperationException();
+  }
+
+  /**
    * Returns the latest downloaded data that we have for the given group name.
    *
    * <p>This api takes an instance of {@link GetFileGroupRequest} that contains group name, and it

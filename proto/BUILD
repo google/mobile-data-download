@@ -2,7 +2,9 @@ load("//third_party/bazel_rules/rules_java/java:defs.bzl", "java_proto_library")
 
 package(
     default_applicable_licenses = ["//:license"],
-    default_visibility = ["//visibility:public"],
+    default_visibility = [
+        "//visibility:public",
+    ],
     licenses = ["notice"],
 )
 
@@ -17,6 +19,11 @@ proto_library(
 
 java_lite_proto_library(
     name = "client_config_java_proto_lite",
+    deps = [":client_config_proto"],
+)
+
+java_proto_library(
+    name = "client_config_java_proto",
     deps = [":client_config_proto"],
 )
 
@@ -38,6 +45,11 @@ kt_jvm_lite_proto_library(
 
 java_lite_proto_library(
     name = "download_config_java_proto_lite",
+    deps = [":download_config_proto"],
+)
+
+java_proto_library(
+    name = "download_config_java_proto",
     deps = [":download_config_proto"],
 )
 

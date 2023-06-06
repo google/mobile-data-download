@@ -16,12 +16,11 @@ syntax = "proto2";
 package mdi.download;
 
 import "google/protobuf/any.proto";
-import "proto/transform.proto";
+import "transform.proto";
 
 option java_package = "com.google.mobiledatadownload";
 option java_outer_classname = "DownloadConfigProto";
 option objc_class_prefix = "Icing";
-option go_api_flag = "OPEN_TO_OPAQUE_HYBRID";  // See <internal>.
 
 // The top-level proto for Mobile Data Download (<internal>).
 message DownloadConfig {
@@ -530,8 +529,6 @@ message ManifestConfig {
         // prefix encoding, however, for the S2CellIds the high-order bits
         // encode the face-ID and as a result we often end up with large
         // numbers.
-        optional fixed64 s2_cell_id = 1 [
-          (datapol.semantic_type) = ST_LOCATION
         optional fixed64 s2_cell_id = 1;
       }
 

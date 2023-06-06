@@ -61,6 +61,20 @@ public final class MultiSchemeFileDownloader implements FileDownloader {
     return new Builder();
   }
 
+  /** Returns a Builder containing all registered FileDownloaders. */
+  public Builder toBuilder() {
+    final Builder builder = new Builder();
+    for (Map.Entry<String, FileDownloader> entry : schemeToDownloader.entrySet()) {
+      builder.addScheme(entry.getKey(), entry.getValue());
+    }
+    return builder;
+  }
+
+  /** Returns true if a FileDownloader is registered for the given scheme. */
+  public boolean supportsScheme(String scheme) {
+    return schemeToDownloader.containsKey(scheme);
+  }
+
   private MultiSchemeFileDownloader(Builder builder) {
     this.schemeToDownloader = ImmutableMap.copyOf(builder.schemeToDownloader);
   }
