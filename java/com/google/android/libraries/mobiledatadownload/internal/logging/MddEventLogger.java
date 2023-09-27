@@ -134,7 +134,7 @@ public final class MddEventLogger implements EventLogger {
 
   @Override
   public void logMddLibApiResultLog(Void mddLibApiResultLog) {
-    MddLogData.Builder logData = MddLogData.newBuilder();
+    MddLogData.Builder logData = MddLogData.newBuilder().setMddLibApiResultLog(mddLibApiResultLog);
 
     sampleAndSendLogEvent(
         MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, logData, flags.apiLoggingSampleInterval());
@@ -186,7 +186,10 @@ public final class MddEventLogger implements EventLogger {
         MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
         () ->
             PropagatedFutures.transform(
-                buildNetworkStats.call(), networkStats -> Arrays.asList(), directExecutor()),
+                buildNetworkStats.call(),
+                networkStats ->
+                    Arrays.asList(MddLogData.newBuilder().setMddNetworkStats(networkStats).build()),
+                directExecutor()),
         flags.networkStatsLoggingSampleInterval());
   }
 
@@ -223,7 +226,9 @@ public final class MddEventLogger implements EventLogger {
   public void logMddDownloadLatency(
       DataDownloadFileGroupStats fileGroupDetails, Void downloadLatency) {
     MddLogData.Builder logData =
-        MddLogData.newBuilder().setDataDownloadFileGroupStats(fileGroupDetails);
+        MddLogData.newBuilder()
+            .setMddDownloadLatency(downloadLatency)
+            .setDataDownloadFileGroupStats(fileGroupDetails);
 
     sampleAndSendLogEvent(
         MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, logData, flags.mddDefaultSampleInterval());
@@ -351,6 +356,7 @@ public final class MddEventLogger implements EventLogger {
       // return early for unspecified codes.
       return;
     }
+
     logData
         .setSamplingInterval(sampleInterval)
         .setDeviceInfo(MddDeviceInfo.newBuilder().setDeviceStorageLow(isDeviceStorageLow(context)))

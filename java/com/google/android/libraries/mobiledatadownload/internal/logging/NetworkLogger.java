@@ -26,6 +26,7 @@ import com.google.android.libraries.mobiledatadownload.tracing.PropagatedFutures
 import com.google.common.base.Optional;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mobiledatadownload.internal.MetadataProto.FileGroupLoggingState;
+import com.google.mobiledatadownload.LogProto.DataDownloadFileGroupStats;
 import java.util.List;
 import javax.inject.Inject;
 
@@ -72,6 +73,27 @@ public class NetworkLogger {
     long totalMddCellularCount = 0;
     Void networkStatsBuilder = null;
 
-    return networkStatsBuilder;
+    for (FileGroupLoggingState fileGroupLoggingState : allDataUsage) {
+      networkStatsBuilder.addGroupStats(
+          MddNetworkStats.GroupStats.newBuilder()
+              .setDataDownloadFileGroupStats(
+                  DataDownloadFileGroupStats.newBuilder()
+                      .setOwnerPackage(fileGroupLoggingState.getGroupKey().getOwnerPackage())
+                      .setFileGroupName(fileGroupLoggingState.getGroupKey().getGroupName())
+                      .setFileGroupVersionNumber(fileGroupLoggingState.getFileGroupVersionNumber())
+                      .setBuildId(fileGroupLoggingState.getBuildId())
+                      .setVariantId(fileGroupLoggingState.getVariantId())
+                      .build())
+              .setTotalWifiBytes(fileGroupLoggingState.getWifiUsage())
+              .setTotalCellularBytes(fileGroupLoggingState.getCellularUsage()));
+
+      totalMddWifiCount += fileGroupLoggingState.getWifiUsage();
+      totalMddCellularCount += fileGroupLoggingState.getCellularUsage();
+    }
+
+    networkStatsBuilder
+        .setTotalMddWifiBytes(totalMddWifiCount)
+        .setTotalMddCellularBytes(totalMddCellularCount);
+    return networkStatsBuilder.build();
   }
 }
