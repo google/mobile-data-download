@@ -43,13 +43,42 @@ message MddClientEvent {
     // Logged with DataDownloadFileGroupStats, MddFileGroupStatus.
     DATA_DOWNLOAD_FILE_GROUP_STATUS = 1044;
 
-    // Log MddStorageStats in daily maintenance.
-    DATA_DOWNLOAD_STORAGE_STATS = 1055;
-
     // MDD download result log.
     DATA_DOWNLOAD_RESULT_LOG = 1068;
 
-    reserved 1000 to 1043, 1045 to 1054, 1056 to 1067, 1069 to 1113;
+    // Log MddStorageStats in daily maintenance.
+    DATA_DOWNLOAD_STORAGE_STATS = 1055;
+
+    // Log event for MDD Lib api result.
+    DATA_DOWNLOAD_LIB_API_RESULT = 1108;
+
+    // Log MddNetworkStats in daily maintenance.
+    DATA_DOWNLOAD_NETWORK_STATS = 1056;
+
+    // File group download started.
+    DATA_DOWNLOAD_STARTED = 1070;
+
+    // File group download complete.
+    DATA_DOWNLOAD_COMPLETE = 1007;
+
+    // The log event for MDD download latency.
+    DATA_DOWNLOAD_LATENCY_LOG = 1080;
+
+    // All files in the group were already available when the file group was
+    // added.
+    DATA_DOWNLOAD_COMPLETE_IMMEDIATE = 1032;
+
+    DATA_DOWNLOAD_PENDING_GROUP_REPLACED = 1115;
+
+    reserved 1000 to 1006;
+    reserved 1008 to 1031;
+    reserved 1033 to 1043;
+    reserved 1045 to 1054;
+    reserved 1057 to 1067;
+    reserved 1069;
+    reserved 1071 to 1079;
+    reserved 1081 to 1107;
+    reserved 1109 to 1114;
 
     reserved 2000 to 2999, 3000 to 3999, 4000 to 4099, 4100 to 4199,
         5000 to 5999, 6000 to 6999, 7000 to 7999, 8000 to 8999, 9000 to 9999,
@@ -169,5 +198,79 @@ message MddDownloadResult {
     MANIFEST_FILE_GROUP_POPULATOR_METADATA_IO_ERROR = 404;
 
     reserved 1000 to 3000;
+  }
+}
+
+// Collection of MDD Lib's Public API methods used when logging the result of an
+// MDD Lib API call.
+message MddLibApiName {
+  enum Code {
+    UNKNOWN = 0;
+
+    // File Group metadata management APIs.
+    // NOTE: These APIs will include DataDownloadFileGroupStats in their
+    // logs.
+    ADD_FILE_GROUP = 1;
+    GET_FILE_GROUP = 2;
+    REMOVE_FILE_GROUP = 3;
+    REPORT_USAGE = 4;
+
+    // File Group data management APIs.
+    // NOTE: These APIs will include DataDownloadFileGroupStats in their
+    // logs.
+    CANCEL_FOREGROUND_DOWNLOAD = 5;
+    DOWNLOAD_FILE_GROUP = 6;
+    DOWNLOAD_FILE_GROUP_WITH_FOREGROUND_SERVICE = 7;
+    IMPORT_FILES = 8;
+
+    // File Group metadata bulk management APIs
+    // NOTE: These APIs will not include DataDownloadFileGroupStats in
+    // their logs.
+    CLEAR = 9;
+    GET_FILE_GROUPS_BY_FILTER = 10;
+    MAINTENANCE = 11;
+    REMOVE_FILE_GROUPS_BY_FILTER = 12;
+
+    // File data management APIs
+    // NOTE: These APIs will not include DataDownloadFileGroupStats in
+    // their logs.
+    DOWNLOAD_FILE = 13;
+    DOWNLOAD_FILE_WITH_FOREGROUND_SERVICE = 14;
+
+    // Task scheduling APIs.
+    // NOTE: These APIs will not include DataDownloadFileGroupStats in
+    // their logs.
+    HANDLE_TASK = 15;
+    SCHEDULE_PERIODIC_BACKGROUND_TASKS = 16;
+    SYNC = 17;
+
+    // Calls to phenotype external experiment id setting
+
+    // NOTE: this isn't actually an MDD API but the data is in the same format.
+    // DataDownloadFileGroupStats will be populated when available.
+    PHENOTYPE_CLEAR_EXPERIMENT_IDS = 18;
+    PHENOTYPE_UPDATE_EXPERIMENT_IDS = 19;
+    PHENOTYPE_CLEAR_ALL = 20;
+  }
+}
+
+// Result enum when logging the result of an MDD Lib API call.
+message MddLibApiResult {
+  enum Code {
+    RESULT_UNKNOWN = 0;
+    RESULT_SUCCESS = 1;
+
+    // Codes for failures
+    // Used for failures whose is reason is unknown.
+    RESULT_FAILURE = 2;
+    // Request cancelled
+    RESULT_CANCELLED = 3;
+    // Interrupted
+    RESULT_INTERRUPTED = 4;
+    RESULT_IO_ERROR = 5;
+    RESULT_ILLEGAL_STATE = 6;
+    RESULT_ILLEGAL_ARGUMENT = 7;
+    RESULT_UNSUPPORTED_OPERATION = 8;
+    RESULT_DOWNLOAD_ERROR = 9;
   }
 }

@@ -74,7 +74,7 @@ public interface EventLogger {
   /** Log mdd api call stats. */
   void logMddApiCallStats(DataDownloadFileGroupStats fileGroupDetails, Void apiCallStats);
 
-  void logMddLibApiResultLog(Void mddLibApiResultLog);
+  void logMddLibApiResultLog(MddLibApiResultLog mddLibApiResultLog);
 
   /**
    * Log mdd storage stats. The buildMddStorageStats callable is only called if the event is going
@@ -90,11 +90,11 @@ public interface EventLogger {
    * Log mdd network stats. The buildMddNetworkStats callable is only called if the event is going
    * to be logged.
    *
-   * @param buildMddNetworkStats callable which builds the Void to log.
+   * @param buildMddNetworkStats callable which builds the MddNetworkStats to log.
    * @return a future that completes when the logging work is done. The future will complete with a
    *     failure if the callable fails or if there is an error when logging.
    */
-  ListenableFuture<Void> logMddNetworkStats(AsyncCallable<Void> buildMddNetworkStats);
+  ListenableFuture<Void> logMddNetworkStats(AsyncCallable<MddNetworkStats> buildMddNetworkStats);
 
   /** Log the number of unaccounted files/metadata deleted during maintenance */
   void logMddDataDownloadFileExpirationEvent(int eventCode, int count);
@@ -119,7 +119,8 @@ public interface EventLogger {
   void logMddAndroidSharingLog(Void event);
 
   /** Log mdd download latency. */
-  void logMddDownloadLatency(DataDownloadFileGroupStats fileGroupStats, Void downloadLatency);
+  void logMddDownloadLatency(
+      DataDownloadFileGroupStats fileGroupStats, MddDownloadLatency downloadLatency);
 
   /** Log mdd usage event. */
   void logMddUsageEvent(DataDownloadFileGroupStats fileGroupDetails, Void usageEventLog);

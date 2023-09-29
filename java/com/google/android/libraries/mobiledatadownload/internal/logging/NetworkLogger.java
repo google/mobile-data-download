@@ -68,10 +68,10 @@ public class NetworkLogger {
                 allDataUsageFuture, this::buildNetworkStats, directExecutor()));
   }
 
-  private Void buildNetworkStats(List<FileGroupLoggingState> allDataUsage) {
+  private MddNetworkStats buildNetworkStats(List<FileGroupLoggingState> allDataUsage) {
     long totalMddWifiCount = 0;
     long totalMddCellularCount = 0;
-    Void networkStatsBuilder = null;
+    MddNetworkStats.Builder networkStatsBuilder = MddNetworkStats.newBuilder();
 
     for (FileGroupLoggingState fileGroupLoggingState : allDataUsage) {
       networkStatsBuilder.addGroupStats(

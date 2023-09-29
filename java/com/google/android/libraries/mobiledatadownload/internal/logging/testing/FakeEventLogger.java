@@ -33,11 +33,11 @@ import java.util.List;
 public final class FakeEventLogger implements EventLogger {
 
   private final ArrayList<MddClientEvent.Code> loggedCodes = new ArrayList<>();
-  private final ArrayListMultimap<DataDownloadFileGroupStats, Void> loggedLatencies =
+  private final ArrayListMultimap<DataDownloadFileGroupStats, MddDownloadLatency> loggedLatencies =
       ArrayListMultimap.create();
   private final ArrayListMultimap<DataDownloadFileGroupStats, Void> loggedNewConfigReceived =
       ArrayListMultimap.create();
-  private final List<Void> loggedMddLibApiResultLog = new ArrayList<>();
+  private final List<MddLibApiResultLog> loggedMddLibApiResultLog = new ArrayList<>();
   private final ArrayList<DataDownloadFileGroupStats> loggedMddQueryStats = new ArrayList<>();
 
   @Override
@@ -73,11 +73,11 @@ public final class FakeEventLogger implements EventLogger {
   }
 
   @Override
-  public void logMddLibApiResultLog(Void mddLibApiResultLog) {
+  public void logMddLibApiResultLog(MddLibApiResultLog mddLibApiResultLog) {
     loggedMddLibApiResultLog.add(mddLibApiResultLog);
   }
 
-  public List<Void> getLoggedMddLibApiResultLogs() {
+  public List<MddLibApiResultLog> getLoggedMddLibApiResultLogs() {
     return loggedMddLibApiResultLog;
   }
 
@@ -89,7 +89,8 @@ public final class FakeEventLogger implements EventLogger {
   }
 
   @Override
-  public ListenableFuture<Void> logMddNetworkStats(AsyncCallable<Void> buildMddNetworkStats) {
+  public ListenableFuture<Void> logMddNetworkStats(
+      AsyncCallable<MddNetworkStats> buildMddNetworkStats) {
     return immediateFailedFuture(
         new UnsupportedOperationException("This method is not implemented in the fake yet."));
   }
@@ -128,7 +129,7 @@ public final class FakeEventLogger implements EventLogger {
 
   @Override
   public void logMddDownloadLatency(
-      DataDownloadFileGroupStats fileGroupStats, Void downloadLatency) {
+      DataDownloadFileGroupStats fileGroupStats, MddDownloadLatency downloadLatency) {
     loggedLatencies.put(fileGroupStats, downloadLatency);
   }
 
@@ -159,7 +160,7 @@ public final class FakeEventLogger implements EventLogger {
     return loggedCodes;
   }
 
-  public ArrayListMultimap<DataDownloadFileGroupStats, Void> getLoggedLatencies() {
+  public ArrayListMultimap<DataDownloadFileGroupStats, MddDownloadLatency> getLoggedLatencies() {
     return loggedLatencies;
   }
 

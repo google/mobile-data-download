@@ -181,8 +181,17 @@ message MddLogData {
   // MDD download result log.
   optional MddDownloadResultLog mdd_download_result_log = 63;
 
-  reserved 1 to 9, 11 to 20, 22 to 31, 33 to 39, 41 to 45, 47 to 50, 52 to 62,
-      64 to 71, 73;
+  // MDD download latency log.
+  optional MddDownloadLatency mdd_download_latency = 67;
+
+  // MDD Api Result event
+  optional MddLibApiResultLog mdd_lib_api_result_log = 71;
+
+  // MDD File Group Network Stats. Additional info necessary for Network Stats.
+  optional MddNetworkStats mdd_network_stats = 49
+
+  reserved 1 to 9, 11 to 20, 22 to 31, 33 to 39, 41 to 45, 47 to 48, 50,
+      52 to 62, 64 to 66, 68 to 70, 73;
 }
 
 // Info on sampling method used for log events. Stable sampling means if a
@@ -267,4 +276,53 @@ message MddStorageStats {
   //
   // See <internal> for more info.
   optional int32 days_since_last_log = 6;
+}
+
+// MDD download latency log.
+// Next tag: 4
+message MddDownloadLatency {
+  // The number of download attempts needed to fully download the file group.
+  optional int32 download_attempt_count = 1;
+  // The download latency in milliseconds, which is the time elapsed between
+  // download started and download complete.
+  optional int64 download_latency_ms = 2;
+  // The total MDD download latency in milliseconds, which is the time elapsed
+  // between new config received from P/H and download complete.
+  // True E2E download latency = PH propagation latency + MDD total download
+  // latency. Here we are talking about the later.
+  optional int64 total_latency_ms = 3;
+}
+
+// MDD Lib API result log.
+// This log will be generated for each MDD Lib API call.
+//
+// Next tag: 5
+message MddLibApiResultLog {
+  // The API which generated this result.
+  optional MddLibApiName.Code api_used = 1;
+
+  // The result of the API call.
+  optional MddLibApiResult.Code result = 2;
+
+  // Will be populated with relevant file group details depending on the api
+  // type. See MddLibApiName for more details.
+  repeated DataDownloadFileGroupStats data_download_file_group_stats = 3;
+
+  // The latency in nano seconds.
+  optional int64 latency_ns = 4;
+}
+
+// MDD File Group Network stats.
+message MddNetworkStats {
+  optional DataDownloadFileGroupStats data_download_file_group_stats = 1;
+
+  // The total bytes downloaded through Wifi by the file group.
+  optional int64 total_wifi_bytes = 2;
+
+  // The total bytes downloaded through Cellular by the file group.
+  optional int64 total_cellular_bytes = 3;
+
+  // The total bytes downloaded through ways other than wifi or Cellular by the
+  // file group. E.g. import from local storage & etc.
+  optional int64 total_other_bytes = 4;
 }

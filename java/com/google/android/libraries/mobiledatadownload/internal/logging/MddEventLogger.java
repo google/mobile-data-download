@@ -133,11 +133,13 @@ public final class MddEventLogger implements EventLogger {
   }
 
   @Override
-  public void logMddLibApiResultLog(Void mddLibApiResultLog) {
+  public void logMddLibApiResultLog(MddLibApiResultLog mddLibApiResultLog) {
     MddLogData.Builder logData = MddLogData.newBuilder().setMddLibApiResultLog(mddLibApiResultLog);
 
     sampleAndSendLogEvent(
-        MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, logData, flags.apiLoggingSampleInterval());
+        MddClientEvent.Code.DATA_DOWNLOAD_LIB_API_RESULT,
+        logData,
+        flags.apiLoggingSampleInterval());
   }
 
   @Override
@@ -181,9 +183,10 @@ public final class MddEventLogger implements EventLogger {
   }
 
   @Override
-  public ListenableFuture<Void> logMddNetworkStats(AsyncCallable<Void> buildNetworkStats) {
+  public ListenableFuture<Void> logMddNetworkStats(
+      AsyncCallable<MddNetworkStats> buildNetworkStats) {
     return lazySampleAndSendLogEvent(
-        MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+        MddClientEvent.Code.DATA_DOWNLOAD_NETWORK_STATS,
         () ->
             PropagatedFutures.transform(
                 buildNetworkStats.call(),
@@ -224,14 +227,14 @@ public final class MddEventLogger implements EventLogger {
 
   @Override
   public void logMddDownloadLatency(
-      DataDownloadFileGroupStats fileGroupDetails, Void downloadLatency) {
+      DataDownloadFileGroupStats fileGroupDetails, MddDownloadLatency downloadLatency) {
     MddLogData.Builder logData =
         MddLogData.newBuilder()
             .setMddDownloadLatency(downloadLatency)
             .setDataDownloadFileGroupStats(fileGroupDetails);
 
     sampleAndSendLogEvent(
-        MddClientEvent.Code.EVENT_CODE_UNSPECIFIED, logData, flags.mddDefaultSampleInterval());
+        MddClientEvent.Code.DATA_DOWNLOAD_LATENCY_LOG, logData, flags.mddDefaultSampleInterval());
   }
 
   @Override
