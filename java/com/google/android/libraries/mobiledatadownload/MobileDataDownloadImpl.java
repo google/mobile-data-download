@@ -215,7 +215,7 @@ class MobileDataDownloadImpl implements MobileDataDownload {
    * @see attachMddApiLogging
    */
   private interface ResultCodeFromApiResultGetter<T> {
-    int get(T result);
+    MddLibApiResult.Code get(T result);
   }
 
   /**
@@ -231,7 +231,7 @@ class MobileDataDownloadImpl implements MobileDataDownload {
    *     stats and logged.
    */
   private <T> void attachMddApiLogging(
-      int apiName,
+      MddLibApiName.Code apiName,
       ListenableFuture<T> resultFuture,
       long startTimeNs,
       DataDownloadFileGroupStats defaultFileGroupStats,
@@ -248,7 +248,7 @@ class MobileDataDownloadImpl implements MobileDataDownload {
               var unused =
                   PropagatedFutures.submit(
                       () -> {
-                        int resultCode;
+                        MddLibApiResult.Code resultCode;
                         T result = null;
                         DataDownloadFileGroupStats fileGroupStats = defaultFileGroupStats;
                         try {
@@ -266,7 +266,13 @@ class MobileDataDownloadImpl implements MobileDataDownload {
                                   .build();
                         }
 
-                        Void resultLog = null;
+                        MddLibApiResultLog resultLog =
+                            MddLibApiResultLog.newBuilder()
+                                .setApiUsed(apiName)
+                                .setResult(resultCode)
+                                .setLatencyNs(latencyNs)
+                                .addDataDownloadFileGroupStats(fileGroupStats)
+                                .build();
 
                         eventLogger.logMddLibApiResultLog(resultLog);
                       },
@@ -295,12 +301,13 @@ class MobileDataDownloadImpl implements MobileDataDownload {
             .setFileCount(addFileGroupRequest.dataFileGroup().getFileCount())
             .build();
     attachMddApiLogging(
-        0,
+        MddLibApiName.Code.ADD_FILE_GROUP,
         resultFuture,
         startTimeNs,
         defaultFileGroupStats,
         /* statsCreator= */ unused -> defaultFileGroupStats,
-        /* resultCodeGetter= */ succeeded -> succeeded ? 0 : 0);
+        /* resultCodeGetter= */ succeeded ->
+            succeeded ? MddLibApiResult.Code.RESULT_SUCCESS : MddLibApiResult.Code.RESULT_FAILURE);
 
     return resultFuture;
   }
@@ -496,12 +503,12 @@ class MobileDataDownloadImpl implements MobileDataDownload {
             sequentialControlExecutor);
 
     attachMddApiLogging(
-        0,
+        MddLibApiName.Code.GET_FILE_GROUP,
         resultFuture,
         startTimeNs,
         createFileGroupStatsFromGetFileGroupRequest(getFileGroupRequest),
         /* statsCreator= */ result -> createFileGroupDetails(result),
-        /* resultCodeGetter= */ unused -> 0);
+        /* resultCodeGetter= */ unused -> MddLibApiResult.Code.RESULT_SUCCESS);
     return resultFuture;
   }
 

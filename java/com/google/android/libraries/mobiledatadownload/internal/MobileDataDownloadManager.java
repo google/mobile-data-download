@@ -337,7 +337,7 @@ public class MobileDataDownloadManager {
                 // downloaded, pendingGroup must be non-null.
                 DataFileGroupInternal group = checkNotNull(getDone(pendingGroupFuture));
                 eventLogger.logEventSampled(
-                    MddClientEvent.Code.EVENT_CODE_UNSPECIFIED,
+                    MddClientEvent.Code.DATA_DOWNLOAD_COMPLETE_IMMEDIATE,
                     group.getGroupName(),
                     group.getFileGroupVersionNumber(),
                     group.getBuildId(),

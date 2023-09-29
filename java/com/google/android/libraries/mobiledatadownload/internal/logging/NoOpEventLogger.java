@@ -52,7 +52,7 @@ public final class NoOpEventLogger implements EventLogger {
   public void logMddApiCallStats(DataDownloadFileGroupStats fileGroupDetails, Void apiCallStats) {}
 
   @Override
-  public void logMddLibApiResultLog(Void mddLibApiResultLog) {}
+  public void logMddLibApiResultLog(MddLibApiResultLog mddLibApiResultLog) {}
 
   @Override
   public ListenableFuture<Void> logMddStorageStats(
@@ -61,7 +61,8 @@ public final class NoOpEventLogger implements EventLogger {
   }
 
   @Override
-  public ListenableFuture<Void> logMddNetworkStats(AsyncCallable<Void> buildMddNetworkStats) {
+  public ListenableFuture<Void> logMddNetworkStats(
+      AsyncCallable<MddNetworkStats> buildMddNetworkStats) {
     return immediateVoidFuture();
   }
 
@@ -89,7 +90,7 @@ public final class NoOpEventLogger implements EventLogger {
 
   @Override
   public void logMddDownloadLatency(
-      DataDownloadFileGroupStats fileGroupStats, Void downloadLatency) {}
+      DataDownloadFileGroupStats fileGroupStats, MddDownloadLatency downloadLatency) {}
 
   @Override
   public void logMddUsageEvent(DataDownloadFileGroupStats fileGroupDetails, Void usageEventLog) {}
